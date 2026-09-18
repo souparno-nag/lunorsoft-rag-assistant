@@ -146,6 +146,10 @@ _HEADING_MAX_CHARS = 90
 # that way. Bounds the top-level section number to something a real outline
 # could reach.
 _HEADING_MAX_SECTION_NUMBER = 99
+# How far one outline step may advance. Exactly 1 covers a well-formed
+# document; the slack absorbs a heading this module failed to detect, so one
+# miss does not break the chain behind it and cost every following section.
+_HEADING_MAX_OUTLINE_STEP = 3
 # Words no heading ends on — these mark a line that has been cut off mid-clause
 # rather than a title.
 _HEADING_BAD_TAIL = frozenset(
@@ -297,18 +301,41 @@ def _outline(candidates: list[_Candidate]) -> list[_Candidate]:
 
 
 def _follows(earlier: tuple[int, ...], later: tuple[int, ...]) -> bool:
-    """Whether `later` can directly follow `earlier` in one outline."""
+    """Whether `later` can directly follow `earlier` in one outline.
+
+    An outline moves in exactly two ways. It opens a level, and the new level
+    starts at 1 — 3.2 may be followed by 3.2.1, never by 3.2.7. Or it advances
+    a sibling at some level, closing any levels below it: 3.2.3 is followed by
+    3.3, or by 4, but not by 50.
+
+    That last point is the whole reason this is not simply "later > earlier".
+    Chart axis labels, measurements and quantities look exactly like section
+    numbers, and a run of them ("50 RAG-Tok", "52 RAG-Tok") forms a perfectly
+    monotone chain of its own. Requiring each step to be *small* is what keeps
+    them from joining the document's real outline and displacing it — without
+    it, rag.pdf lost its real "5 Related Work" and "6 Discussion" headings to
+    two labels from a bar chart.
+    """
     if later <= earlier:
         return False
-    # Going a level deeper has to start at 1: 3.2 may be followed by 3.2.1,
-    # never by 3.2.7. This is what stops a page number or a measurement from
-    # attaching itself to the chain.
+
+    # Opening a level: 3.2 -> 3.2.1, or -> 3.2.2 if 3.2.1 went undetected.
     if len(later) > len(earlier):
         return (
             later[: len(earlier)] == earlier
-            and later[len(earlier) :] == (1,) * (len(later) - len(earlier))
+            and 1 <= later[len(earlier)] <= _HEADING_MAX_OUTLINE_STEP
         )
-    return True
+
+    # Advancing at some depth, which closes every level below it: 3.2.3 -> 3.3,
+    # or 3.2.3 -> 4. The depth is searched rather than assumed, because a
+    # heading this module missed leaves a step that spans levels — 2.2 -> 3.2
+    # is a normal move through a document whose "3" and "3.1" were not
+    # detected, and rejecting it would forfeit every section after it.
+    return any(
+        later[:depth] == earlier[:depth]
+        and 1 <= later[depth] - earlier[depth] <= _HEADING_MAX_OUTLINE_STEP
+        for depth in range(len(later))
+    )
 
 
 def _iter_lines(text: str) -> Iterator[tuple[int, str]]:
