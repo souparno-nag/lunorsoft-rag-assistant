@@ -9,3 +9,6 @@ finished tasks into one commit, and do not leave completed work uncommitted.
 
 Committing does not need to be confirmed each time. Pushing, force-pushing, and
 opening pull requests still do.
+
+Do not add AI attribution to commit messages or pull request descriptions — no
+`Co-Authored-By` trailer for an assistant, no "Generated with" footer.
