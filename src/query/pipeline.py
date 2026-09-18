@@ -1,11 +1,14 @@
 """Query pipeline — orchestrates the full query flow (see specs/design.md §5, §9).
 
-The shape as of Phase 4: retrieve with dense and sparse search fused together,
-assemble a token-budgeted context, generate a grounded answer. Re-ranking
-(Phase 5), query transformation (Phase 6) and the grounding check (Phase 7)
-each slot in without this module's shape changing — re-ranking between
-retrieval and context assembly, transformation in front of retrieval,
-grounding after generation.
+The shape as of Phase 5: retrieve with dense and sparse search fused together,
+re-rank the candidates with a cross-encoder, assemble a token-budgeted context
+from the survivors, generate a grounded answer. Query transformation (Phase 6)
+and the grounding check (Phase 7) slot in without this module's shape changing
+— transformation in front of retrieval, grounding after generation.
+
+Retrieval is deliberately wide and selection deliberately narrow: K_RETRIEVE
+candidates are gathered so that recall is somebody else's problem, and
+K_FINAL survive re-ranking so that precision is.
 """
 
 import logging
@@ -15,6 +18,7 @@ from src.generate.generator import generate_answer
 from src.index.indexer import Indexer
 from src.models.schemas import AnswerEnvelope, Chunk
 from src.query.hybrid_retriever import HybridRetriever
+from src.query.reranker import rerank
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +42,9 @@ def answer_question(query: str, indexer: Indexer | None = None) -> AnswerEnvelop
     results = retriever.retrieve(query, k=settings.K_RETRIEVE)
     retrieved_k = len(results)
 
+    selected = rerank(query, results, k=settings.K_FINAL)
     context = _assemble_context(
-        [result.chunk for result in results], settings.MAX_CONTEXT_TOKENS
+        [result.chunk for result in selected], settings.MAX_CONTEXT_TOKENS
     )
     answer = generate_answer(query, context)
 
@@ -53,12 +58,15 @@ def answer_question(query: str, indexer: Indexer | None = None) -> AnswerEnvelop
 def _assemble_context(chunks: list[Chunk], max_tokens: int) -> list[Chunk]:
     """Take chunks in ranked order until the token budget would be exceeded.
 
-    `chunks` must already be ordered best-first, as the retriever returns
+    `chunks` must already be ordered best-first, as the re-ranker returns
     them; this only decides where to cut, dropping the lowest-ranked chunks
     once the budget is spent (specs/design.md §5.4, §14 "Oversized context").
-    There is no re-ranking yet to order by, so the cut is by fused-retrieval
-    rank — the same trimming rule, applied to whatever ranking the current
-    pipeline stage has produced.
+
+    In practice the budget rarely binds now that re-ranking hands over only
+    K_FINAL chunks — five chunks capped at CHUNK_MAX_TOKENS cannot approach
+    MAX_CONTEXT_TOKENS. It stays because it is the guard that holds when those
+    numbers are tuned, and because an over-long chunk (see the character-split
+    fallback in the chunker) can still arrive larger than expected.
 
     The first chunk is always kept even if it alone exceeds `max_tokens`: a
     context that slightly overruns the budget is still useful to the LLM, an
