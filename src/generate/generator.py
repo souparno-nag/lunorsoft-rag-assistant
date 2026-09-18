@@ -15,6 +15,7 @@ internally before an exception would ever reach this module.
 """
 
 import logging
+import re
 from functools import lru_cache
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -37,6 +38,23 @@ _SYSTEM_PROMPT = f"""You are a knowledge assistant. You answer questions using O
 3. If the sources do not contain enough information to answer the question, respond with exactly this sentence and nothing else: "{NOT_FOUND_MESSAGE}"
 4. Do not fabricate, guess, or fill gaps with speculation. A partial, honestly-cited answer is better than a complete-sounding one without support.
 5. Be concise and answer the question directly."""
+
+
+# A citation marker written with full-width or CJK brackets instead of ASCII
+# ones. GPT-OSS emits these regularly despite _SYSTEM_PROMPT rule 2 forbidding
+# them — instructing a model not to do something is not a guarantee that it
+# will not, and Phase 8 parses these markers to build the citation list, so the
+# answer text has to be normalized rather than merely requested.
+#
+# Only digits, commas and spaces are allowed between the brackets. That is what
+# makes this safe on a corpus that legitimately contains CJK text: 【1, 3】 is
+# a citation and is rewritten, 【重要】 is content and is left alone.
+_NON_ASCII_CITATION = re.compile(r"[【〔［]\s*([\d\s,]+?)\s*[】〕］]")
+
+
+def normalize_citation_markers(text: str) -> str:
+    """Rewrite non-ASCII citation brackets as plain square brackets."""
+    return _NON_ASCII_CITATION.sub(lambda m: f"[{' '.join(m.group(1).split())}]", text)
 
 
 class GenerationError(RuntimeError):
@@ -68,7 +86,7 @@ def generate_answer(
     except Exception as exc:
         raise GenerationError(f"Failed to generate an answer: {exc}") from exc
 
-    text = str(response.content or "").strip()
+    text = normalize_citation_markers(str(response.content or "").strip())
     if not text:
         # GPT-OSS emits reasoning tokens before the answer, and they count
         # against LLM_MAX_TOKENS (see config/settings.py), so a tight budget
