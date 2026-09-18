@@ -11,6 +11,7 @@ exception-only fallback would never catch it because the degraded text extracts
 
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import pdfplumber
@@ -128,68 +129,184 @@ _UNICODE_SPACES = re.compile(
 )
 _HORIZONTAL_RUNS = re.compile(r"[ \t]+")
 _BLANK_RUNS = re.compile(r"\n{3,}")
-# A hyphen at end of line followed by a lowercase letter is line-breaking
-# hyphenation ("repre-\nsentation"), not a real compound. Requiring lowercase
-# leaves genuine hyphenates such as "Dot-\nProduct" intact.
-_LINE_BREAK_HYPHEN = re.compile(r"(\w)-\n([a-z])")
+# A hyphen at end of line followed by a lowercase word. Requiring lowercase
+# skips the clear-cut compounds such as "Dot-\nProduct"; everything that does
+# match is ambiguous and is resolved against _Vocabulary below.
+_HYPHEN_BREAK = re.compile(r"([A-Za-z]+)-\n([a-z][A-Za-z]*)")
+# A word standing on its own, i.e. not part of a hyphenated compound.
+_STANDALONE_WORD = re.compile(r"(?<![\w-])([A-Za-z]{2,})(?![\w-])")
+# A compound written with its hyphen intact on one line. The character
+# class excludes newlines, so line-broken hyphens cannot match here.
+_INLINE_COMPOUND = re.compile(r"(?<![\w-])([A-Za-z]+)-([A-Za-z]+)(?![\w-])")
 _DIGITS = re.compile(r"\d+")
+_ROMAN_NUMERAL = re.compile(
+    r"(?=[ivxlcdm])m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})"
+)
 
 
-def preprocess_pages(pages: list[Page]) -> list[Page]:
-    """Normalize whitespace, rejoin hyphenated words and drop page furniture."""
+def preprocess_pages(pages: list[Page], *, from_layout: bool = True) -> list[Page]:
+    """Normalize whitespace, rejoin hyphenated words and drop page furniture.
+
+    `from_layout` says whether the text came out of a paginated layout (a PDF)
+    or was written by a human (Markdown, plain text). It matters because the
+    two need opposite treatment: indentation in a PDF is an artefact of where
+    glyphs sat on the page and should go, whereas indentation in Markdown is
+    the author's and carries meaning — flattening it turns a nested code block
+    into syntactically wrong code and a table into a row of pipes. Likewise a
+    line-final hyphen is typesetting in a PDF and deliberate in authored text.
+    """
     pages = [
-        Page(page_number=page.page_number, text=normalize_whitespace(page.text))
+        Page(
+            page_number=page.page_number,
+            text=normalize_whitespace(page.text, collapse_layout=from_layout),
+        )
         for page in pages
     ]
     pages = strip_repeated_headers_footers(pages)
+    if not from_layout:
+        return pages
+
+    # Built once from the whole document so that a hyphen broken across a page
+    # boundary is judged against the same evidence as the rest, and so the cost
+    # is paid once rather than per page.
+    evidence = _Vocabulary.from_text("\n".join(page.text for page in pages))
     return [
-        Page(page_number=page.page_number, text=normalize_whitespace(dehyphenate(page.text)))
+        Page(
+            page_number=page.page_number,
+            text=normalize_whitespace(dehyphenate(page.text, evidence)),
+        )
         for page in pages
     ]
 
 
-def normalize_whitespace(text: str) -> str:
+def normalize_whitespace(text: str, *, collapse_layout: bool = True) -> str:
     """Collapse the whitespace noise that PDF extraction leaves behind.
 
-    Idempotent, so it is safe to run again after other passes have edited the
-    text.
+    With `collapse_layout` off, only unambiguous noise is touched — line
+    endings, exotic space characters, trailing spaces and runs of blank lines —
+    and the indentation the author wrote is left alone.
+
+    Idempotent either way, so it is safe to run again after other passes have
+    edited the text.
     """
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = _UNICODE_SPACES.sub(" ", text)
-    text = _HORIZONTAL_RUNS.sub(" ", text)
-    text = "\n".join(line.strip() for line in text.split("\n"))
+    if collapse_layout:
+        text = _HORIZONTAL_RUNS.sub(" ", text)
+        text = "\n".join(line.strip() for line in text.split("\n"))
+    else:
+        text = "\n".join(line.rstrip() for line in text.split("\n"))
     text = _BLANK_RUNS.sub("\n\n", text)
     return text.strip()
 
 
-def dehyphenate(text: str) -> str:
+def dehyphenate(text: str, evidence: "_Vocabulary | None" = None) -> str:
     """Rejoin words split across a line break by hyphenation.
 
     Without this, "repre-\\nsentation" is embedded as two fragments and never
     matches a search for "representation".
+
+    The hard part is that a line-final hyphen is ambiguous: it may be a word
+    broken by the typesetter ("convolu-\\ntional") or a genuine compound that
+    happened to break at its own hyphen ("position-\\nwise"). Joining blindly
+    corrupts the second kind — on the sample paper it produced "positionwise",
+    "attentionbased" and "sequencealigned", destroying the very terms a reader
+    would search for.
+
+    Rather than guess, each case is decided against evidence from the rest of
+    the document; see `_Vocabulary.should_join`. `evidence` is normally built
+    once per document by `preprocess_pages`, and is derived from `text` itself
+    when the function is called on its own.
     """
-    return _LINE_BREAK_HYPHEN.sub(r"\1\2", text)
+    evidence = evidence or _Vocabulary.from_text(text)
+    return _HYPHEN_BREAK.sub(
+        lambda m: m.group(1) + m.group(2)
+        if evidence.should_join(m.group(1), m.group(2))
+        else f"{m.group(1)}-{m.group(2)}",
+        text,
+    )
+
+
+@dataclass(frozen=True)
+class _Vocabulary:
+    """What the document itself says about how its words are spelled.
+
+    A technical document repeats its own terminology, so the surrounding text
+    is a more reliable authority on whether "position-wise" is one word or two
+    than any general rule could be — and it needs no dictionary to ship.
+    """
+
+    words: frozenset[str]
+    compounds: frozenset[tuple[str, str]]
+
+    @classmethod
+    def from_text(cls, text: str) -> "_Vocabulary":
+        return cls(
+            words=frozenset(w.lower() for w in _STANDALONE_WORD.findall(text)),
+            compounds=frozenset(
+                (left.lower(), right.lower())
+                for left, right in _INLINE_COMPOUND.findall(text)
+            ),
+        )
+
+    def should_join(self, left: str, right: str) -> bool:
+        """Decide whether a line-broken hyphen should be dropped or kept."""
+        # The strongest evidence: the document writes the joined form
+        # elsewhere, so the hyphen was the typesetter's.
+        if (left + right).lower() in self.words:
+            return True
+        # Equally strong in reverse: the document writes the compound with its
+        # hyphen elsewhere on a single line.
+        if (left.lower(), right.lower()) in self.compounds:
+            return False
+        # No direct evidence. Two words that each stand alone in the document
+        # ("source" and "target") are far more likely to be a compound than a
+        # word cut in half, whereas fragments like "convolu" and "tional" are
+        # not words anywhere.
+        if left.lower() in self.words and right.lower() in self.words:
+            return False
+        return True
 
 
 def strip_repeated_headers_footers(pages: list[Page]) -> list[Page]:
-    """Drop running heads and footers — the lines that recur on most pages.
+    """Drop running heads, footers and sidebars — whatever recurs on most pages.
 
-    Candidates are taken only from the top and bottom few lines of each page,
-    and are compared with digit runs masked, so that a footer which is just the
-    page number ("2", "3", "4", ...) is recognized as one recurring line rather
-    than fifteen unique ones.
+    Two conditions must both hold, which is what keeps this safe on documents
+    it was never tuned against:
+
+    1. The line recurs on most pages, compared with digit runs and roman
+       numerals masked, so a footer that is merely the page number ("2", "3",
+       ... or "ii", "iii", ...) is recognized as one pattern rather than as
+       dozens of unique lines.
+    2. The line belongs to an unbroken run inward from the top or bottom of its
+       page. The run stops at the first line that is not furniture, so body
+       text that happens to repeat can never be reached.
+
+    Walking a run, rather than scanning a fixed number of lines, is what lets
+    this handle multi-line furniture: a rotated "available free of charge from"
+    sidebar extracts as nine consecutive one-word lines, which no two-line
+    window would ever catch.
+
+    Two known limitations, both bounded:
+
+    - Digit masking cannot tell a page number from another short numbered line,
+      so a heading like "Problem 1" sitting at a page edge on most pages is
+      removed along with the furniture. Masking is still worth it, because it
+      is what collapses "2", "3", "4", ... into a single pattern.
+    - A running head that varies with the chapter ("3 Scheduling", then
+      "4 Memory") never recurs often enough to reach the threshold, so it
+      survives.
     """
     if len(pages) < settings.HEADER_FOOTER_MIN_PAGES:
         return pages
 
     lines_per_page = [page.text.split("\n") for page in pages]
-    edges_per_page = [_edge_indices(lines) for lines in lines_per_page]
 
-    # Counted once per page, so a document whose header and footer happen to be
-    # identical does not count as two sightings on a single page.
+    # Counted once per page, so a line appearing twice on one page does not
+    # look like evidence of recurrence across the document.
     counts: dict[str, int] = {}
-    for lines, edges in zip(lines_per_page, edges_per_page):
-        for key in {_mask_digits(lines[i]) for i in edges}:
+    for lines in lines_per_page:
+        for key in {_mask_digits(line) for line in lines if line.strip()}:
             counts[key] = counts.get(key, 0) + 1
 
     threshold = max(2, round(settings.HEADER_FOOTER_MIN_FRACTION * len(pages)))
@@ -199,30 +316,59 @@ def strip_repeated_headers_footers(pages: list[Page]) -> list[Page]:
 
     cleaned: list[Page] = []
     removed = 0
-    for page, lines, edges in zip(pages, lines_per_page, edges_per_page):
-        # Only the edge positions are dropped — body text that happens to match
-        # a running head stays where it is.
-        drop = {i for i in edges if _mask_digits(lines[i]) in furniture}
+    for page, lines in zip(pages, lines_per_page):
+        drop = _furniture_runs(lines, furniture)
         removed += len(drop)
         kept = [line for i, line in enumerate(lines) if i not in drop]
         cleaned.append(Page(page_number=page.page_number, text="\n".join(kept)))
 
+    before = sum(len(page.text) for page in pages)
+    after = sum(len(page.text) for page in cleaned)
+    share = (before - after) / before if before else 0.0
+    if share > settings.HEADER_FOOTER_MAX_DOCUMENT_FRACTION:
+        logger.warning(
+            "Header/footer removal would drop %.0f%% of the document; leaving "
+            "it untouched, as that much recurring text is more likely to be "
+            "real content than page furniture",
+            100 * share,
+        )
+        return pages
+
     logger.info(
-        "Removed %d header/footer line(s) matching %d recurring pattern(s)",
+        "Removed %d header/footer line(s) matching %d recurring pattern(s), "
+        "%.1f%% of the text",
         removed,
         len(furniture),
+        100 * share,
     )
     return cleaned
 
 
-def _edge_indices(lines: list[str]) -> list[int]:
-    """Indices of the first and last few non-empty lines — the only candidates."""
+def _furniture_runs(lines: list[str], furniture: set[str]) -> set[int]:
+    """Indices of the furniture runs at the top and bottom of one page.
+
+    Each run stops at the first line that is not furniture, which is what
+    protects body text. Blank lines are skipped rather than treated as a stop,
+    so a blank line between a running head and the text does not end the run
+    early. A page whose every line recurs is emptied, and the loader then drops
+    it — that page was boilerplate.
+    """
     filled = [i for i, line in enumerate(lines) if line.strip()]
-    scan = settings.HEADER_FOOTER_SCAN_LINES
-    if len(filled) <= 2 * scan:
-        return filled
-    return filled[:scan] + filled[-scan:]
+
+    drop: set[int] = set()
+    for order in (filled, list(reversed(filled))):
+        for i in order:
+            if i in drop or _mask_digits(lines[i]) not in furniture:
+                break
+            drop.add(i)
+    return drop
 
 
 def _mask_digits(line: str) -> str:
-    return _DIGITS.sub("#", line.strip().lower())
+    """Normalize a line so that page-number variants collapse to one pattern."""
+    line = line.strip().lower()
+    # A line that is nothing but a roman numeral is a page number. Matching the
+    # whole line only, so that ordinary words are never mistaken for numerals.
+    if _ROMAN_NUMERAL.fullmatch(line):
+        return "#"
+    return _DIGITS.sub("#", line)

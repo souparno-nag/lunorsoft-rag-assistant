@@ -69,13 +69,25 @@ PDF_X_TOLERANCE = 2.0
 PDF_RUNON_MIN_WORD_LEN = 15
 PDF_RUNON_MAX_FRACTION = 0.08
 
-# Repeated header/footer removal. Only the first and last few lines of a page
-# are candidates, and a candidate must recur on most pages to be dropped, so
-# section headings and body text are never at risk. Short documents are left
-# alone because a handful of pages cannot establish that a line is furniture.
-HEADER_FOOTER_SCAN_LINES = 2
+# Repeated header/footer removal. A line is furniture only if it recurs on this
+# fraction of the document's pages AND sits in an unbroken run inward from the
+# top or bottom of its page, so body text is never at risk. Short documents are
+# left alone because a handful of pages cannot establish that a line recurs.
 HEADER_FOOTER_MIN_PAGES = 3
 HEADER_FOOTER_MIN_FRACTION = 0.6
+# Catastrophe guard, not a tuning knob: if furniture removal would take more
+# than this share of the document's characters, the detection is assumed to
+# have gone wrong and the document is left untouched. Set high on purpose. The
+# case worth defending against is a systematic extraction quirk that makes
+# every page look identical and would silently delete the entire corpus; a
+# document that is merely mostly furniture — a sparse slide deck whose few
+# words compete with a footer on every slide — should still be cleaned.
+# Measured documents land between 0.1% and 7%.
+# Applied once to the whole document rather than per page, so every page is
+# cleaned by the same rule — a per-page budget made the outcome depend on how
+# much body text a page happened to have, and left furniture behind on the
+# shorter pages of the same document.
+HEADER_FOOTER_MAX_DOCUMENT_FRACTION = 0.9
 
 # Chunking
 CHUNK_SIZE = 1000

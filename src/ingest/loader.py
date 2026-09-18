@@ -90,16 +90,18 @@ def _build(path: Path, display_name: str, content: bytes) -> RawDocument:
     suffix = path.suffix.lower()
     _check_supported(suffix, display_name)
 
-    if suffix in PDF_SUFFIXES:
+    from_layout = suffix in PDF_SUFFIXES
+    if from_layout:
         pages = extract_pages(path)
     else:
         # Plain text has no pagination; it becomes a single page so that
         # citations still have a page slot to fill.
         pages = [Page(page_number=1, text=content.decode("utf-8", errors="replace"))]
 
-    # Runs for plain text too: a .md file benefits from whitespace
-    # normalization even though it has no page furniture to strip.
-    pages = preprocess_pages(pages)
+    # Runs for plain text too, but in a gentler mode: a .md file still wants
+    # its line endings and stray spaces normalized, while keeping the
+    # indentation that gives its code blocks and tables meaning.
+    pages = preprocess_pages(pages, from_layout=from_layout)
     pages = [page for page in pages if page.text.strip()]
     if not pages:
         raise EmptyDocumentError(
