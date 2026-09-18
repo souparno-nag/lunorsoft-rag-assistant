@@ -23,7 +23,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 # Switching provider changes the vector dimensionality, so the index must be
 # rebuilt from scratch after a change — Chroma cannot mix dimensions.
 EmbeddingProvider = Literal["gemini", "local"]
-EMBEDDING_PROVIDER: EmbeddingProvider = os.getenv("EMBEDDING_PROVIDER", "local")
+
+_provider = os.getenv("EMBEDDING_PROVIDER", "local")
+if _provider not in ("gemini", "local"):
+    raise ValueError(
+        f"EMBEDDING_PROVIDER must be 'gemini' or 'local', got {_provider!r}"
+    )
+EMBEDDING_PROVIDER: EmbeddingProvider = _provider
 
 # Groq is chat-only; embeddings never route here. Llama models 404 on the free
 # tier — they are enterprise-gated — so generation uses GPT-OSS. The judge runs
