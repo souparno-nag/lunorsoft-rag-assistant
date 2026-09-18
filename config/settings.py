@@ -140,6 +140,14 @@ CHUNK_EMBED_PROVIDER = "local"
 K_RETRIEVE = 20
 K_FINAL = 5
 
+# Re-ranking. The cross-encoder is the single biggest precision win over top-k
+# vector search, and also the slowest stage per candidate, so it runs on the
+# K_RETRIEVE fused candidates only and hands K_FINAL to the generator.
+# Switching it off falls back to fused-retrieval order, which is what the
+# README's before/after comparison needs.
+RERANKING = True
+RERANK_BATCH_SIZE = 32
+
 FusionMethod = Literal["rrf", "weighted"]
 FUSION_METHOD: FusionMethod = "rrf"
 RRF_K = 60

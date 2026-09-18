@@ -129,7 +129,7 @@ missed now surfaces the right chunk. Save one such example for the README.
 
 | ID | Status | Task | Deps | Prio | Eff | Files |
 | --- | --- | --- | --- | --- | --- | --- |
-| T5.1 | ☐ | Cross-encoder reranker (local `ms-marco-MiniLM-L-6-v2`); score each candidate jointly with the query | T4.3 | MUST | M | `src/query/reranker.py` |
+| T5.1 | ☑ | Cross-encoder reranker (local `ms-marco-MiniLM-L-6-v2`); score each candidate jointly with the query | T4.3 | MUST | M | `src/query/reranker.py` |
 | T5.2 | ☐ | Keep top `k_final` after reranking; populate `rerank_score` on `RetrievalResult` | T5.1 | MUST | S | `src/query/reranker.py` |
 | T5.3 | ☐ | Insert reranking between hybrid retrieval and context assembly in `pipeline.py` | T5.2, T4.4 | MUST | S | `src/query/pipeline.py` |
 
