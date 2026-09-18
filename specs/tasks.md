@@ -103,7 +103,7 @@ end locally. **This is the fallback submission if time runs out.**
 | --- | --- | --- | --- | --- | --- | --- |
 | T3.1 | ☑ | Structure-aware split: detect section/heading boundaries (font-size/regex heuristics) so chunks don't straddle sections; capture `section_header` metadata | T1.2 | MUST | M | `src/ingest/chunker.py` |
 | T3.2 | ☑ | Semantic split within sections (LangChain `SemanticChunker`); enforce min/max token bounds + small overlap | T3.1, T1.5 | MUST | M | `src/ingest/chunker.py` |
-| T3.3 | ☐ | Swap pipeline to advanced chunker; re-index; sanity-check chunk coherence vs basic chunking | T3.2, T1.6 | MUST | S | `src/ingest/chunker.py` |
+| T3.3 | ☑ | Swap pipeline to advanced chunker; re-index; sanity-check chunk coherence vs basic chunking | T3.2, T1.6 | MUST | S | `src/ingest/chunker.py` |
 
 **Definition of done (Phase 3):** chunks align to topic/section boundaries;
 `section_header` populated for citations. Keep a note of the before/after
