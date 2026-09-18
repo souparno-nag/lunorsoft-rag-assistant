@@ -1,5 +1,19 @@
 # Project conventions
 
+## Starting work
+
+Do not execute a task unless I explicitly say so. Reading the codebase, reading
+the specs in `specs/`, analysing what is there and proposing an approach are
+always fine and need no permission; creating or editing project files does.
+
+When a task or phase looks ready to start, summarise the current state, flag
+whatever decisions are open, and then wait. An obvious next step in
+`specs/tasks.md` is not an instruction to begin it — I decide the order and
+shape of the work.
+
+This does not narrow the Git rule below: once I have asked for a task, commit
+its result without pausing for confirmation.
+
 ## Git
 
 Commit after every meaningful change. In practice that means one commit per
