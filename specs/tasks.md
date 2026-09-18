@@ -117,7 +117,7 @@ difference for the README.
 | --- | --- | --- | --- | --- | --- | --- |
 | T4.1 | ☑ | Build BM25 / keyword index over the same chunk set (`rank_bm25` / `BM25Retriever`), persisted to `storage/` | T3.3 | MUST | M | `src/index/keyword_index.py` |
 | T4.2 | ☑ | Hybrid retriever: run dense (vector) + sparse (BM25) in parallel | T4.1, T1.6 | MUST | M | `src/query/hybrid_retriever.py` |
-| T4.3 | ☐ | Fuse results with **Reciprocal Rank Fusion** (default); weighted fusion available via config; output `k_retrieve` candidates | T4.2 | MUST | M | `src/query/hybrid_retriever.py` |
+| T4.3 | ☑ | Fuse results with **Reciprocal Rank Fusion** (default); weighted fusion available via config; output `k_retrieve` candidates | T4.2 | MUST | M | `src/query/hybrid_retriever.py` |
 | T4.4 | ☐ | Wire hybrid retriever into `pipeline.py` (replaces single vector retrieval) | T4.3, T2.2 | MUST | S | `src/query/pipeline.py` |
 
 **Definition of done (Phase 4):** an exact-keyword query that pure vector search
