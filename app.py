@@ -73,9 +73,21 @@ def render_upload(store: VectorStore) -> None:
 
 def render_query(store: VectorStore) -> None:
     st.subheader("2. Ask a question")
+    has_documents = store.count() > 0
 
-    question = st.text_input("Your question", placeholder="What is …?")
-    ask = st.button("Ask")
+    # T2.4: querying is blocked, not just discouraged, while the index is
+    # empty — the input and button are disabled so there is nothing to submit,
+    # and the prompt below says plainly what to do instead.
+    question = st.text_input(
+        "Your question",
+        disabled=not has_documents,
+        placeholder="Upload and index a document first" if not has_documents else "What is …?",
+    )
+    ask = st.button("Ask", disabled=not has_documents)
+
+    if not has_documents:
+        st.info("Upload and index a document above before asking a question.")
+        return
 
     if ask and not question.strip():
         st.warning("Type a question first.")
