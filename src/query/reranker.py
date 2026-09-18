@@ -32,6 +32,36 @@ class RerankerUnavailable(RuntimeError):
     """Raised when the cross-encoder model cannot be loaded."""
 
 
+def rerank(
+    query: str, results: list[RetrievalResult], k: int | None = None
+) -> list[RetrievalResult]:
+    """Re-order `results` by cross-encoder relevance and keep the best `k`.
+
+    Degrades rather than fails. If the model is unavailable — no network on a
+    first run, a corrupted cache, a machine without the disk for it — the
+    fused retrieval order is used instead and the query still gets answered,
+    with a warning in the log. A pipeline that refuses to answer because its
+    *optional precision stage* is missing would be worse than one that answers
+    slightly less precisely (specs/design.md §2, "fail safe, not silent").
+    """
+    k = k or settings.K_FINAL
+    if not results:
+        return []
+
+    if not settings.RERANKING:
+        return results[:k]
+
+    try:
+        ranked = score(query, results)
+    except RerankerUnavailable as exc:
+        logger.warning(
+            "Re-ranking skipped (%s); falling back to fused retrieval order", exc
+        )
+        return results[:k]
+
+    return ranked[:k]
+
+
 def score(query: str, results: list[RetrievalResult]) -> list[RetrievalResult]:
     """Score every candidate against the query and return them best first.
 
