@@ -12,3 +12,8 @@ opening pull requests still do.
 
 Do not add AI attribution to commit messages or pull request descriptions — no
 `Co-Authored-By` trailer for an assistant, no "Generated with" footer.
+
+## Task tracking
+
+`specs/tasks.md` has a Status column (☐ / ◐ / ☑). Flip a task to ☑ in the same
+commit that completes it, so the spec never disagrees with the repository.
