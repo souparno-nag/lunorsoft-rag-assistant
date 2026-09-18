@@ -50,6 +50,9 @@ LLM_MAX_TOKENS = 1024
 GEMINI_EMBED_MODEL = "models/gemini-embedding-001"
 GEMINI_EMBED_DIM = 768
 LOCAL_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+# MiniLM-L6 is a 384-dimension model. Declared rather than probed so the
+# vector store can detect a provider switch without spending an API call.
+LOCAL_EMBED_DIM = 384
 RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 EMBED_BATCH_SIZE = 64

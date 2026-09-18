@@ -66,7 +66,7 @@ config and schema stubs importable without error.
 | T1.2 | ☑ | Text extraction with `pdfplumber` (PyPDF fallback); capture **page numbers** as metadata | T1.1 | MUST | M | `src/ingest/extract.py` |
 | T1.3 | ☑ | Preprocessing: whitespace normalization, de-hyphenation, strip repeated headers/footers | T1.2 | MUST | S | `src/ingest/extract.py` |
 | T1.4 | ☑ | **Basic** chunking: `RecursiveCharacterTextSplitter` with size+overlap from config; emit `Chunk` objects with full metadata | T1.2, T0.5 | MUST | S | `src/ingest/chunker.py` |
-| T1.5 | ☐ | Embedding module with provider switch: Gemini (`langchain-google-genai`) **and** local `all-MiniLM-L6-v2`; batching + retry/backoff on 429 | T0.4 | MUST | M | `src/index/embeddings.py` |
+| T1.5 | ☑ | Embedding module with provider switch: Gemini (`langchain-google-genai`) **and** local `all-MiniLM-L6-v2`; batching + retry/backoff on 429 | T0.4 | MUST | M | `src/index/embeddings.py` |
 | T1.6 | ☐ | Vector store wrapper (Chroma default), persisted to `storage/`; store vector + `chunk_id` + metadata payload | T1.4, T1.5 | MUST | M | `src/index/vector_store.py` |
 
 **Definition of done (Phase 1):** running ingestion on a sample PDF populates a
