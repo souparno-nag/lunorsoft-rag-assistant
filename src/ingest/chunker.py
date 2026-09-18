@@ -5,8 +5,11 @@ Two stages, deliberately not fixed-size:
 1. **Structure-aware** — the document is first cut at its own section
    boundaries, so a chunk never straddles two unrelated sections and every
    chunk can be cited with the heading it came from.
-2. **Semantic** — within a section, boundaries fall at topic shifts rather
-   than at arbitrary character counts (added in T3.2).
+2. **Semantic** — within a section, sentences are embedded and a boundary is
+   placed wherever consecutive sentences are unusually dissimilar, so chunks
+   break at topic shifts rather than at arbitrary character counts. Min/max
+   token guardrails then keep the result from degenerating into one-line
+   chunks or runaway ones.
 
 Splitting runs over the whole document rather than page by page. A paragraph
 that continues across a page break stays in one chunk that way, where per-page
@@ -22,6 +25,7 @@ loader accepts. The known cost is documented on `_heading_candidates`.
 """
 
 import logging
+import math
 import re
 from bisect import bisect_right
 from collections.abc import Iterable, Iterator
@@ -66,9 +70,11 @@ def chunk_document(document: RawDocument) -> list[Chunk]:
         sum(1 for section in sections if section.header),
     )
 
+    spans_by_section = _plan_spans(text, sections)
+
     chunks: list[Chunk] = []
-    for section in sections:
-        for start, end in _split_section(text, section):
+    for section, spans in zip(sections, spans_by_section):
+        for start, end in spans:
             body = text[start:end].strip()
             if not body:
                 continue
@@ -313,15 +319,233 @@ def _iter_lines(text: str) -> Iterator[tuple[int, str]]:
         offset += len(line) + 1
 
 
-# --- Splitting within a section ---------------------------------------------
+# --- Splitting within a section (T3.2) --------------------------------------
+#
+# Boundaries come from the text's own topic structure rather than from a
+# character count: cut the section into sentences, embed them, break wherever
+# consecutive sentences are unusually dissimilar, then enforce the token
+# guardrails and carry a small overlap between neighbours.
+#
+# Everything is carried as (start, end) offsets into the document text rather
+# than as strings, so a chunk's recorded span always reproduces its text
+# exactly and `_PageIndex` can still resolve which page to cite.
+
+# A sentence ends at .!? — plus any closing quote or bracket — followed by
+# whitespace, or at a blank line. Abbreviations ("e.g.", "et al.") do cut a
+# sentence early, but the min-token guardrail rejoins the fragment, so the
+# error corrects itself rather than reaching a chunk.
+_SENTENCE_BOUNDARY = re.compile(r"""(?<=[.!?])["')\]]*\s+|\n{2,}""")
 
 
-def _split_section(text: str, section: Section) -> list[tuple[int, int]]:
-    """Split one section into `(start, end)` spans of `text`.
+def _plan_spans(text: str, sections: list[Section]) -> list[list[tuple[int, int]]]:
+    """Decide every chunk boundary in the document, section by section.
 
-    Fixed-size for now; T3.2 replaces this with the semantic splitter. Spans
-    are returned rather than strings so that character offsets stay exact and
-    `_PageIndex` can still resolve each chunk's page.
+    Sentence embedding happens here, once for the whole document, rather than
+    inside each section: a section is often only a handful of sentences, and
+    paying the model's per-call overhead once per section — thirty-nine times
+    over on NIST SP 800-63-3 — costs far more than the embedding itself.
+    """
+    sentences_by_section = [_sentence_spans(text, section) for section in sections]
+
+    if not settings.SEMANTIC_CHUNKING:
+        return [_fixed_size_spans(text, section) for section in sections]
+
+    flat = [span for spans in sentences_by_section for span in spans]
+    # A lone sentence cannot be dissimilar to anything, so there is nothing to
+    # embed and nothing to decide.
+    vectors = _embed_sentences(text, flat) if len(flat) > 1 else []
+
+    planned: list[list[tuple[int, int]]] = []
+    cursor = 0
+    for section, sentences in zip(sections, sentences_by_section):
+        section_vectors = vectors[cursor : cursor + len(sentences)]
+        cursor += len(sentences)
+        planned.append(_split_section(text, section, sentences, section_vectors))
+    return planned
+
+
+def _split_section(
+    text: str,
+    section: Section,
+    sentences: list[tuple[int, int]],
+    vectors: list[list[float]],
+) -> list[tuple[int, int]]:
+    """Split one section into chunk spans."""
+    if not sentences:
+        return []
+    # A section holding nothing but its own heading has no retrievable content
+    # of its own; the heading still reaches citations as metadata on the
+    # sections nested under it.
+    if section.header and text[section.start : section.end].strip() == section.header:
+        return []
+
+    groups = _group_by_topic(sentences, vectors) if vectors else [sentences]
+    groups = _enforce_token_bounds(text, groups)
+    spans = [(group[0][0], group[-1][1]) for group in groups if group]
+    return _with_overlap(spans, section)
+
+
+def _sentence_spans(text: str, section: Section) -> list[tuple[int, int]]:
+    """Cut a section into sentence spans, as offsets into the document text."""
+    spans: list[tuple[int, int]] = []
+    cursor = section.start
+    for match in _SENTENCE_BOUNDARY.finditer(text, section.start, section.end):
+        if match.end() > cursor:
+            spans.append((cursor, match.end()))
+            cursor = match.end()
+    if cursor < section.end:
+        spans.append((cursor, section.end))
+    return [span for span in spans if text[span[0] : span[1]].strip()]
+
+
+def _embed_sentences(text: str, spans: list[tuple[int, int]]) -> list[list[float]]:
+    """Embed every sentence in the document with the local model.
+
+    Deliberately not the configured retrieval provider — see
+    `settings.CHUNK_EMBED_PROVIDER`. Failure here is not fatal: an empty result
+    makes the caller treat each section as one group, which the token
+    guardrails then cut to size, so an unavailable model degrades chunk quality
+    instead of refusing the document.
+    """
+    from src.index.embeddings import get_embeddings
+
+    sentences = [text[start:end].strip() for start, end in spans]
+    try:
+        return get_embeddings(settings.CHUNK_EMBED_PROVIDER).embed_documents(sentences)
+    except Exception as exc:
+        logger.warning(
+            "Semantic chunking unavailable (%s); falling back to token-bounded "
+            "splitting within each section",
+            exc,
+        )
+        return []
+
+
+def _group_by_topic(
+    sentences: list[tuple[int, int]], vectors: list[list[float]]
+) -> list[list[tuple[int, int]]]:
+    """Group consecutive sentences, breaking where the topic shifts.
+
+    The distance between neighbouring sentences is judged against a percentile
+    of the distances in this same section, so the cut-off adapts to how much
+    the section's own prose moves around rather than imposing one number on
+    every document.
+    """
+    if len(sentences) < 2 or len(vectors) != len(sentences):
+        return [sentences]
+
+    distances = [1.0 - _dot(vectors[i], vectors[i + 1]) for i in range(len(vectors) - 1)]
+    threshold = _percentile(distances, settings.SEMANTIC_BREAKPOINT_PERCENTILE)
+
+    groups: list[list[tuple[int, int]]] = [[sentences[0]]]
+    for i, distance in enumerate(distances):
+        if distance > threshold:
+            groups.append([])
+        groups[-1].append(sentences[i + 1])
+    return groups
+
+
+def _enforce_token_bounds(
+    text: str, groups: list[list[tuple[int, int]]]
+) -> list[list[tuple[int, int]]]:
+    """Merge groups that are too small and split ones that are too large.
+
+    Semantic boundaries alone produce both: a one-sentence chunk too sparse to
+    retrieve on, and a long undifferentiated passage that would crowd the
+    context window. Merging runs first, so a fragment left behind by an
+    abbreviation is rejoined before anything is measured for splitting.
+    """
+    merged: list[list[tuple[int, int]]] = []
+    for group in groups:
+        if merged and _tokens(text, merged[-1]) < settings.CHUNK_MIN_TOKENS:
+            merged[-1].extend(group)
+        else:
+            merged.append(list(group))
+    # The final group can still be under the minimum with nothing after it to
+    # absorb it, so it folds back into its predecessor instead.
+    if len(merged) > 1 and _tokens(text, merged[-1]) < settings.CHUNK_MIN_TOKENS:
+        merged[-2].extend(merged.pop())
+
+    bounded: list[list[tuple[int, int]]] = []
+    for group in merged:
+        if _tokens(text, group) <= settings.CHUNK_MAX_TOKENS:
+            bounded.append(group)
+            continue
+        # Cut at sentence boundaries rather than mid-sentence.
+        current: list[tuple[int, int]] = []
+        for sentence in group:
+            # One "sentence" can exceed the ceiling by itself where the text
+            # offers no punctuation to cut at — an ASCII table, a BNF grammar
+            # block, a run-on line from a bad extraction. Character-splitting
+            # it is what keeps the ceiling a real bound instead of an
+            # aspiration: without this, RFC 2616 produced 796-token chunks.
+            if _tokens(text, [sentence]) > settings.CHUNK_MAX_TOKENS:
+                if current:
+                    bounded.append(current)
+                    current = []
+                bounded.extend([piece] for piece in _hard_split(text, sentence))
+                continue
+            if current and _tokens(text, current + [sentence]) > settings.CHUNK_MAX_TOKENS:
+                bounded.append(current)
+                current = []
+            current.append(sentence)
+        if current:
+            bounded.append(current)
+    return bounded
+
+
+def _hard_split(text: str, span: tuple[int, int]) -> list[tuple[int, int]]:
+    """Split one over-long sentence by character count — the last resort.
+
+    Reached only when a span has no sentence boundary to cut at, so there is
+    no meaning-preserving place to break and an arbitrary one is the honest
+    choice. Overlap is left at zero here because `_with_overlap` applies it
+    afterwards to every chunk alike.
+    """
+    start, end = span
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=settings.CHUNK_SIZE,
+        chunk_overlap=0,
+        add_start_index=True,
+    )
+    pieces = [
+        (
+            start + piece.metadata["start_index"],
+            start + piece.metadata["start_index"] + len(piece.page_content),
+        )
+        for piece in splitter.create_documents([text[start:end]])
+    ]
+    return pieces or [span]
+
+
+def _with_overlap(
+    spans: list[tuple[int, int]], section: Section
+) -> list[tuple[int, int]]:
+    """Extend each chunk backwards into its predecessor.
+
+    A claim that depends on the sentence before it still retrieves when that
+    sentence is carried along. Extending backwards rather than forwards keeps
+    the recorded span exact — the chunk text stays `text[start:end]` — and the
+    first chunk of a section is left alone, since nothing before it belongs to
+    the same section.
+
+    This can push a chunk slightly past CHUNK_MAX_TOKENS. Accepted: the
+    overlap is bounded by CHUNK_OVERLAP characters, and it is the context
+    budget that trims by rank (specs/design.md §5.4) which actually protects
+    the prompt.
+    """
+    return [
+        (start if i == 0 else max(section.start, start - settings.CHUNK_OVERLAP), end)
+        for i, (start, end) in enumerate(spans)
+    ]
+
+
+def _fixed_size_spans(text: str, section: Section) -> list[tuple[int, int]]:
+    """Fixed-size fallback, used when SEMANTIC_CHUNKING is off.
+
+    Still structure-aware, since it runs inside a single section. That makes it
+    the honest "before" half of the comparison the README needs: same
+    sectioning, boundaries chosen by character count instead of by meaning.
     """
     body = text[section.start : section.end]
     if not body.strip():
@@ -337,6 +561,27 @@ def _split_section(text: str, section: Section) -> list[tuple[int, int]]:
         start = section.start + piece.metadata["start_index"]
         spans.append((start, start + len(piece.page_content)))
     return spans
+
+
+def _tokens(text: str, group: list[tuple[int, int]]) -> int:
+    return count_tokens(text[group[0][0] : group[-1][1]])
+
+
+def _dot(a: list[float], b: list[float]) -> float:
+    """Cosine similarity — vectors arrive unit length (see index/embeddings)."""
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _percentile(values: list[float], percentile: float) -> float:
+    """Linear-interpolated percentile, so numpy is not needed for one number."""
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = (len(ordered) - 1) * percentile / 100.0
+    lower, upper = math.floor(position), math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    return ordered[lower] * (upper - position) + ordered[upper] * (position - lower)
 
 
 # --- Tokens ------------------------------------------------------------------

@@ -103,13 +103,34 @@ HEADER_FOOTER_MAX_DOCUMENT_FRACTION = 0.9
 # than an estimate from a different tokenizer.
 TOKENIZER_ENCODING = "o200k_harmony"
 
-# Chunking. Sizes are in characters: the basic splitter measures characters,
-# while CHUNK_MIN/MAX_TOKENS are the guardrails for the semantic splitter that
-# replaces it in Phase 3.
+# Chunking. CHUNK_SIZE and CHUNK_OVERLAP are in characters; the first is used
+# only by the fixed-size fallback, the second as the overlap carried between
+# adjacent semantic chunks. CHUNK_MIN/MAX_TOKENS are the guardrails that keep
+# semantic boundaries from producing a one-line chunk or a runaway one.
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 150
 CHUNK_MIN_TOKENS = 64
 CHUNK_MAX_TOKENS = 512
+
+# Semantic chunking. Sentences are embedded and a chunk boundary is placed
+# wherever consecutive sentences are unusually dissimilar, so boundaries land
+# at topic shifts instead of at character counts. Turning this off falls back
+# to fixed-size splitting *within* each detected section, which is still
+# structure-aware — useful for the before/after comparison in the README.
+SEMANTIC_CHUNKING = True
+# The breakpoint is a percentile of the section's own distances rather than an
+# absolute distance, because how far apart "adjacent sentences" sit varies by
+# document: prose runs smooth, a specification's clauses jump. Taking the top
+# decile adapts the cut-off per section instead of imposing one number on every
+# document. Higher = fewer, larger chunks.
+SEMANTIC_BREAKPOINT_PERCENTILE = 90
+# Chunking always embeds with the local model, whatever EMBEDDING_PROVIDER is
+# set to for retrieval. Chunk boundaries never have to share a vector space
+# with the index — they are thrown away once the text is split — so sending a
+# document's every sentence to Gemini would spend the free-tier quota that
+# matters for indexing and querying, and add network latency to ingestion, for
+# no gain in boundary quality.
+CHUNK_EMBED_PROVIDER = "local"
 
 # Retrieval
 K_RETRIEVE = 20
