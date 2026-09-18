@@ -18,7 +18,11 @@ CHROMA_COLLECTION = "chunks"
 # the mismatch has to be caught and reported rather than discovered as a
 # dimension error halfway through a query.
 INDEX_META_PATH = STORAGE_DIR / "index_meta.json"
-BM25_PATH = STORAGE_DIR / "bm25.pkl"
+# Every indexed chunk, in full. Serves as both the chunk metadata store of
+# design.md §3 and the corpus the BM25 index is rebuilt from. The BM25
+# structure itself is not persisted: pickling a rank_bm25 object would tie the
+# files on disk to an installed library version, and rebuilding it is a regex
+# pass over the corpus.
 CHUNKS_PATH = STORAGE_DIR / "chunks.jsonl"
 
 # Secrets
