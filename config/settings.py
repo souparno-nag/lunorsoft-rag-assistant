@@ -25,10 +25,18 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 EmbeddingProvider = Literal["gemini", "local"]
 EMBEDDING_PROVIDER: EmbeddingProvider = os.getenv("EMBEDDING_PROVIDER", "local")
 
-# Groq is chat-only; embeddings never route here.
-GROQ_MODEL = "llama-3.3-70b-versatile"
-GROQ_JUDGE_MODEL = "llama-3.3-70b-versatile"
+# Groq is chat-only; embeddings never route here. Llama models 404 on the free
+# tier — they are enterprise-gated — so generation uses GPT-OSS. The judge runs
+# on the smaller variant to keep the second LLM call off the rate-limit budget;
+# raise it to 120b if faithfulness scoring proves unreliable.
+# Do not switch these to groq/compound: it has built-in web search and would
+# answer from outside the documents, breaking grounding.
+GROQ_MODEL = "openai/gpt-oss-120b"
+GROQ_JUDGE_MODEL = "openai/gpt-oss-20b"
 LLM_TEMPERATURE = 0.0
+# GPT-OSS emits reasoning tokens before the answer and they count against this
+# budget, so a tight cap returns empty content rather than a truncated answer.
+LLM_MAX_TOKENS = 1024
 
 # gemini-embedding-001 over gemini-embedding-2: it still accepts task_type
 # (RETRIEVAL_DOCUMENT / RETRIEVAL_QUERY), which the LangChain integration sets
