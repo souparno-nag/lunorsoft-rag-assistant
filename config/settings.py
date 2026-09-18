@@ -56,6 +56,19 @@ EMBED_BATCH_SIZE = 64
 EMBED_MAX_RETRIES = 5
 EMBED_BACKOFF_SECONDS = 2.0
 
+# PDF extraction
+# pdfplumber is primary because it preserves layout information that the
+# structure-aware chunker needs in Phase 3. Its default x_tolerance of 3 merges
+# words on LaTeX-produced PDFs whose inter-word gaps are tight (the sample paper
+# comes out as "Providedproperattribution"); 2.0 restores the spaces without
+# splitting words apart.
+PDF_X_TOLERANCE = 2.0
+# A page whose alphabetic tokens are mostly very long has lost its spaces, and
+# is re-extracted with pypdf. Correctly spaced prose sits near 0.00 by this
+# measure and a space-collapsed page near 0.20, so 0.08 separates them safely.
+PDF_RUNON_MIN_WORD_LEN = 15
+PDF_RUNON_MAX_FRACTION = 0.08
+
 # Chunking
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 150
