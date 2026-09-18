@@ -12,6 +12,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 STORAGE_DIR = PROJECT_ROOT / "storage"
 CHROMA_DIR = STORAGE_DIR / "chroma"
+CHROMA_COLLECTION = "chunks"
+# Records which embedding provider built the index on disk. Switching provider
+# changes the vector width, and Chroma cannot mix widths in one collection, so
+# the mismatch has to be caught and reported rather than discovered as a
+# dimension error halfway through a query.
+INDEX_META_PATH = STORAGE_DIR / "index_meta.json"
 BM25_PATH = STORAGE_DIR / "bm25.pkl"
 CHUNKS_PATH = STORAGE_DIR / "chunks.jsonl"
 

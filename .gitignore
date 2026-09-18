@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Generated indexes. Rebuilt from data/ by running ingestion, so committing
+# them would only add churn — and the Chroma DB is a binary that does not diff.
+storage/chroma/
+storage/bm25.pkl
+storage/chunks.jsonl
+storage/index_meta.json
