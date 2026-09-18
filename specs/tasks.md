@@ -88,7 +88,7 @@ Gemini or local MiniLM (per `design.md §8.1`). Do not wire embeddings to Groq.
 | --- | --- | --- | --- | --- | --- | --- |
 | T2.1 | ☑ | Grounded generator: Groq LLM (`langchain-groq`); strict prompt = answer only from context, say "not found" if insufficient, cite sources | T1.6 | MUST | M | `src/generate/generator.py` |
 | T2.2 | ☑ | Minimal query pipeline: embed query → vector top-k → assemble context (respect token budget) → generate → return `AnswerEnvelope` | T2.1, T1.6 | MUST | M | `src/query/pipeline.py` |
-| T2.3 | ☐ | Streamlit UI v1: upload PDF → trigger ingestion → ask question → show answer | T2.2 | MUST | M | `app.py` |
+| T2.3 | ☑ | Streamlit UI v1: upload PDF → trigger ingestion → ask question → show answer | T2.2 | MUST | M | `app.py` |
 | T2.4 | ☐ | Guard: block querying before any document is indexed; show clear prompt to upload first | T2.3 | MUST | S | `app.py` |
 | **T2.5** | ☐ | **CHECKPOINT — commit + tag a working MVP.** Test full flow in an incognito window. | T2.3 | MUST | S | — |
 
