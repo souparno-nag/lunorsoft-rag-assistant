@@ -89,7 +89,14 @@ HEADER_FOOTER_MIN_FRACTION = 0.6
 # shorter pages of the same document.
 HEADER_FOOTER_MAX_DOCUMENT_FRACTION = 0.9
 
-# Chunking
+# Token counting. o200k_harmony is GPT-OSS's own encoding, so counts match what
+# the Groq model actually sees and the context budget in §5.4 is honest rather
+# than an estimate from a different tokenizer.
+TOKENIZER_ENCODING = "o200k_harmony"
+
+# Chunking. Sizes are in characters: the basic splitter measures characters,
+# while CHUNK_MIN/MAX_TOKENS are the guardrails for the semantic splitter that
+# replaces it in Phase 3.
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 150
 CHUNK_MIN_TOKENS = 64
