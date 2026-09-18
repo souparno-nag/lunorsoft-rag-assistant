@@ -11,7 +11,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from src.ingest.extract import extract_pages
+from src.ingest.extract import extract_pages, preprocess_pages
 from src.models.schemas import Page, RawDocument
 
 PDF_SUFFIXES = {".pdf"}
@@ -97,6 +97,9 @@ def _build(path: Path, display_name: str, content: bytes) -> RawDocument:
         # citations still have a page slot to fill.
         pages = [Page(page_number=1, text=content.decode("utf-8", errors="replace"))]
 
+    # Runs for plain text too: a .md file benefits from whitespace
+    # normalization even though it has no page furniture to strip.
+    pages = preprocess_pages(pages)
     pages = [page for page in pages if page.text.strip()]
     if not pages:
         raise EmptyDocumentError(

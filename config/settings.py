@@ -69,6 +69,14 @@ PDF_X_TOLERANCE = 2.0
 PDF_RUNON_MIN_WORD_LEN = 15
 PDF_RUNON_MAX_FRACTION = 0.08
 
+# Repeated header/footer removal. Only the first and last few lines of a page
+# are candidates, and a candidate must recur on most pages to be dropped, so
+# section headings and body text are never at risk. Short documents are left
+# alone because a handful of pages cannot establish that a line is furniture.
+HEADER_FOOTER_SCAN_LINES = 2
+HEADER_FOOTER_MIN_PAGES = 3
+HEADER_FOOTER_MIN_FRACTION = 0.6
+
 # Chunking
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 150
