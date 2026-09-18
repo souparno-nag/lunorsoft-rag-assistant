@@ -1,19 +1,31 @@
 """Chunking (see specs/design.md §4.3).
 
-Basic fixed-size chunking for the Phase 1 walking skeleton. Phase 3 replaces it
-with the structure-aware and semantic strategy that is the actual
-differentiator; keeping this one first means there is a working index to
-compare that against.
+Two stages, deliberately not fixed-size:
+
+1. **Structure-aware** — the document is first cut at its own section
+   boundaries, so a chunk never straddles two unrelated sections and every
+   chunk can be cited with the heading it came from.
+2. **Semantic** — within a section, boundaries fall at topic shifts rather
+   than at arbitrary character counts (added in T3.2).
 
 Splitting runs over the whole document rather than page by page. A paragraph
 that continues across a page break stays in one chunk that way, where per-page
 splitting would cut it in half and leave both halves harder to retrieve. The
 cost is that a chunk's character offsets no longer imply its page, so pages are
 recovered by mapping offsets back through `_PageIndex`.
+
+Headings are detected from the *shape of the text* alone — numbering, length,
+capitalization — and never from font sizes. Font metrics are unavailable on the
+pypdf fallback path and meaningless for Markdown and plain text, so a
+text-shape rule is the only one that behaves identically on every input the
+loader accepts. The known cost is documented on `_heading_candidates`.
 """
 
+import logging
+import re
 from bisect import bisect_right
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from functools import lru_cache
 
 import tiktoken
@@ -21,6 +33,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
 from src.models.schemas import Chunk, Page, RawDocument
+
+logger = logging.getLogger(__name__)
 
 # Must match how RawDocument.text joins its pages, or every offset below is
 # wrong by the number of preceding pages.
@@ -33,45 +47,299 @@ def chunk_documents(documents: Iterable[RawDocument]) -> list[Chunk]:
 
 
 def chunk_document(document: RawDocument) -> list[Chunk]:
-    """Split one document into overlapping fixed-size chunks.
+    """Split one document into chunks that respect its section structure.
 
     Every chunk carries the metadata a citation needs: which file it came from,
-    which page it starts on, and where it sits in the document text.
+    which page it starts on, which section it belongs to, and where it sits in
+    the document text.
     """
     text = document.text
     if not text.strip():
         return []
 
     pages = _PageIndex.build(document.pages)
+    sections = split_into_sections(text)
+    logger.info(
+        "%s: %d section(s) detected (%d with a heading)",
+        document.source_file,
+        len(sections),
+        sum(1 for section in sections if section.header),
+    )
+
+    chunks: list[Chunk] = []
+    for section in sections:
+        for start, end in _split_section(text, section):
+            body = text[start:end].strip()
+            if not body:
+                continue
+            page_number = pages.page_for_span(start, end)
+            chunks.append(
+                Chunk(
+                    chunk_id=(
+                        f"{document.doc_id}_p{page_number}"
+                        f"_s{section.index}_{len(chunks):04d}"
+                    ),
+                    doc_id=document.doc_id,
+                    source_file=document.source_file,
+                    chunk_text=body,
+                    char_start=start,
+                    char_end=end,
+                    token_count=count_tokens(body),
+                    page_number=page_number,
+                    section_header=section.header,
+                )
+            )
+    return chunks
+
+
+# --- Structure-aware sectioning (T3.1) --------------------------------------
+
+
+@dataclass(frozen=True)
+class Section:
+    """A span of the document text running from one heading to the next.
+
+    `start` points at the heading line itself, not past it, so the heading
+    travels with the text it introduces — it is useful context for the reader
+    of a citation and useful signal for both retrievers.
+    """
+
+    index: int
+    header: str | None
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
+class _Candidate:
+    """A line that might be a heading, before the outline check rules on it."""
+
+    start: int
+    text: str
+    kind: str
+    # The section number as a tuple — (3, 2, 1) for "3.2.1" — or None for a
+    # heading that carries no number.
+    number: tuple[int, ...] | None
+
+
+_MARKDOWN_HEADING = re.compile(r"^(#{1,6})\s+(\S.*)$")
+# "3", "3.2", "3.2.1" — optionally followed by a dot — then a title.
+_NUMBERED_HEADING = re.compile(r"^(\d+(?:\.\d+){0,3})\.?\s+(\S.*)$")
+_ALL_CAPS_HEADING = re.compile(r"^[A-Z0-9][A-Z0-9 \-—:,'/&()]{2,}$")
+# A whole word of three or more letters. The lookarounds matter: without them
+# "AAL1 AAL2 AAL3" reads as three words and a table header is mistaken for a
+# heading.
+_ALPHABETIC_WORD = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]{3,}(?![A-Za-z0-9])")
+# A table-of-contents entry, by its two universal tells: dot leaders, or a
+# title that ends in the page number it points at.
+_CONTENTS_LINE = re.compile(r"\.{3,}|\s\d+\s*$")
+
+_HEADING_MAX_WORDS = 12
+_HEADING_MAX_CHARS = 90
+# A document does not have a section 10062; a bibliography entry does start
+# that way. Bounds the top-level section number to something a real outline
+# could reach.
+_HEADING_MAX_SECTION_NUMBER = 99
+# Words no heading ends on — these mark a line that has been cut off mid-clause
+# rather than a title.
+_HEADING_BAD_TAIL = frozenset(
+    {"and", "or", "the", "of", "a", "an", "with", "to", "for", "is", "are"}
+)
+
+
+def split_into_sections(text: str) -> list[Section]:
+    """Cut `text` at its detected headings.
+
+    A document with no detectable outline — one that leans on indentation or
+    font size to mark its headings — comes back as a single unheaded section.
+    That is the intended degradation, not a failure: the semantic splitter
+    still finds topic boundaries within it, and the BM25 index added in Phase 4
+    covers exact-term lookup regardless of structure.
+    """
+    headings = _outline(_heading_candidates(text))
+
+    if not headings:
+        return [Section(index=0, header=None, start=0, end=len(text))]
+
+    sections: list[Section] = []
+    # Front matter — an abstract, a title block — precedes the first heading
+    # and would otherwise be dropped entirely.
+    if headings[0].start > 0:
+        sections.append(
+            Section(index=0, header=None, start=0, end=headings[0].start)
+        )
+
+    for position, heading in enumerate(headings):
+        end = (
+            headings[position + 1].start
+            if position + 1 < len(headings)
+            else len(text)
+        )
+        sections.append(
+            Section(
+                index=len(sections),
+                header=heading.text,
+                start=heading.start,
+                end=end,
+            )
+        )
+    return sections
+
+
+def _heading_candidates(text: str) -> list[_Candidate]:
+    """Every line whose shape could make it a heading.
+
+    Deliberately generous — the outline check below is what turns this into a
+    decision. Three families are recognized: Markdown ATX headings, numbered
+    sections, and ALL-CAPS lines.
+
+    **Known limitation.** A heading that is neither numbered nor capitalized,
+    and announces itself only by sitting unindented in a larger font — an
+    RFC's "Abstract", a book's chapter title — is not detectable here, because
+    `extract.preprocess_pages` strips the layout whitespace that would be the
+    only remaining evidence. Measured on RFC 2616, this misses a handful of
+    front-matter headings while finding all 194 numbered sections.
+    """
+    candidates: list[_Candidate] = []
+    for start, line in _iter_lines(text):
+        stripped = line.strip()
+        if not stripped or "http" in stripped.lower():
+            continue
+        if _CONTENTS_LINE.search(stripped):
+            continue
+
+        if match := _MARKDOWN_HEADING.match(stripped):
+            # The hash count is the level, so a Markdown outline orders the
+            # same way a numbered one does.
+            candidates.append(
+                _Candidate(start, match.group(2).strip(), "markdown", None)
+            )
+            continue
+
+        if len(stripped) > _HEADING_MAX_CHARS:
+            continue
+        words = stripped.split()
+        if len(words) > _HEADING_MAX_WORDS:
+            continue
+        if stripped.endswith((".", ",", ";")) or words[-1].lower() in _HEADING_BAD_TAIL:
+            continue
+
+        if match := _NUMBERED_HEADING.match(stripped):
+            number = tuple(int(part) for part in match.group(1).split("."))
+            title = match.group(2)
+            if (
+                number[0] <= _HEADING_MAX_SECTION_NUMBER
+                and title[:1].isupper()
+                and _ALPHABETIC_WORD.search(title)
+                # Figure and table captions are numbered and titled exactly
+                # like sections are.
+                and not title.lower().startswith(("figure", "table", "eq"))
+            ):
+                candidates.append(_Candidate(start, stripped, "numbered", number))
+                continue
+
+        if (
+            _ALL_CAPS_HEADING.match(stripped)
+            and ":" not in stripped
+            and len(_ALPHABETIC_WORD.findall(stripped)) >= 2
+        ):
+            candidates.append(_Candidate(start, stripped, "caps", None))
+
+    return candidates
+
+
+def _outline(candidates: list[_Candidate]) -> list[_Candidate]:
+    """Keep only the candidates that form one coherent outline.
+
+    This is what separates a document's real section headings from the things
+    that merely look like them, and it does so without any document-specific
+    tuning: a real outline is a long monotone chain of section numbers, while
+    a table of contents, an enumerated list inside a paragraph, a chart axis
+    and a bibliography entry are each a short chain or none at all. Keeping the
+    longest chain therefore keeps the body and discards the imitations.
+
+    Two real documents motivated this. NIST SP 800-63-3 opens with a contents
+    table that duplicates its outline eight entries deep, and RFC 2616's
+    contents table is *longer* than its detectable body outline — so neither
+    "prefer the first" nor "prefer the longest" alone is right, and the dot
+    leaders that `_CONTENTS_LINE` rejects are what separate them.
+
+    Unnumbered headings cannot join or break a chain, so they are kept as they
+    are; only numbered ones are filtered.
+    """
+    numbered = [c for c in candidates if c.number is not None]
+    if not numbered:
+        return candidates
+
+    # Longest chain ending at each candidate, by the usual O(n²) DP. n is the
+    # number of numbered lines in a document, a few hundred at most.
+    best = [1] * len(numbered)
+    previous = [-1] * len(numbered)
+    for i in range(len(numbered)):
+        for j in range(i):
+            if _follows(numbered[j].number, numbered[i].number) and best[j] + 1 > best[i]:
+                best[i] = best[j] + 1
+                previous[i] = j
+
+    end = max(range(len(numbered)), key=lambda i: best[i])
+    chain: set[int] = set()
+    while end != -1:
+        chain.add(numbered[end].start)
+        end = previous[end]
+
+    return [c for c in candidates if c.number is None or c.start in chain]
+
+
+def _follows(earlier: tuple[int, ...], later: tuple[int, ...]) -> bool:
+    """Whether `later` can directly follow `earlier` in one outline."""
+    if later <= earlier:
+        return False
+    # Going a level deeper has to start at 1: 3.2 may be followed by 3.2.1,
+    # never by 3.2.7. This is what stops a page number or a measurement from
+    # attaching itself to the chain.
+    if len(later) > len(earlier):
+        return (
+            later[: len(earlier)] == earlier
+            and later[len(earlier) :] == (1,) * (len(later) - len(earlier))
+        )
+    return True
+
+
+def _iter_lines(text: str) -> Iterator[tuple[int, str]]:
+    """Yield `(offset, line)` for each line, offsets into `text`."""
+    offset = 0
+    for line in text.split("\n"):
+        yield offset + len(line) - len(line.lstrip()), line
+        offset += len(line) + 1
+
+
+# --- Splitting within a section ---------------------------------------------
+
+
+def _split_section(text: str, section: Section) -> list[tuple[int, int]]:
+    """Split one section into `(start, end)` spans of `text`.
+
+    Fixed-size for now; T3.2 replaces this with the semantic splitter. Spans
+    are returned rather than strings so that character offsets stay exact and
+    `_PageIndex` can still resolve each chunk's page.
+    """
+    body = text[section.start : section.end]
+    if not body.strip():
+        return []
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=settings.CHUNK_SIZE,
         chunk_overlap=settings.CHUNK_OVERLAP,
         add_start_index=True,
     )
+    spans: list[tuple[int, int]] = []
+    for piece in splitter.create_documents([body]):
+        start = section.start + piece.metadata["start_index"]
+        spans.append((start, start + len(piece.page_content)))
+    return spans
 
-    chunks: list[Chunk] = []
-    for piece in splitter.create_documents([text]):
-        body = piece.page_content
-        if not body.strip():
-            continue
 
-        start = piece.metadata["start_index"]
-        page_number = pages.page_for_span(start, start + len(body))
-        chunks.append(
-            Chunk(
-                chunk_id=f"{document.doc_id}_p{page_number}_{len(chunks):04d}",
-                doc_id=document.doc_id,
-                source_file=document.source_file,
-                chunk_text=body,
-                char_start=start,
-                char_end=start + len(body),
-                token_count=count_tokens(body),
-                page_number=page_number,
-                # Populated by the structure-aware chunker in Phase 3 (T3.1).
-                section_header=None,
-            )
-        )
-    return chunks
+# --- Tokens ------------------------------------------------------------------
 
 
 def count_tokens(text: str) -> int:
@@ -83,6 +351,9 @@ def count_tokens(text: str) -> int:
 def _encoding() -> tiktoken.Encoding:
     """Load the tokenizer once; building one costs more than using it."""
     return tiktoken.get_encoding(settings.TOKENIZER_ENCODING)
+
+
+# --- Page mapping ------------------------------------------------------------
 
 
 class _PageIndex:
