@@ -1,0 +1,30 @@
+# Python 3.12 (see .python-version)
+
+# Orchestration
+langchain>=1.4,<2
+langchain-core>=1.6,<2
+langchain-community>=0.4,<0.5
+langchain-text-splitters>=1.1,<2
+langchain-experimental>=0.4,<0.5   # SemanticChunker
+
+# LLM — generation and the grounding judge
+langchain-groq>=1.1,<2             # Groq is chat-only and has no embeddings endpoint
+
+# Embeddings — remote path (deployed) and local path (offline)
+langchain-google-genai>=4.4,<5
+langchain-huggingface>=1.2,<2
+sentence-transformers>=6.0,<7      # local MiniLM embeddings + cross-encoder reranker; pulls in torch
+
+# Indexes
+chromadb>=1.5,<2
+langchain-chroma>=1.1,<2
+rank-bm25>=0.2.2,<0.3
+
+# Document extraction
+pdfplumber>=0.11,<0.12
+pypdf>=6.19,<7
+
+# UI and runtime
+streamlit>=1.64,<2
+python-dotenv>=1.2,<2
+tiktoken>=0.14,<0.15
