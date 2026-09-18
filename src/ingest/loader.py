@@ -94,9 +94,7 @@ def _build(path: Path, display_name: str, content: bytes) -> RawDocument:
     if from_layout:
         pages = extract_pages(path)
     else:
-        # Plain text has no pagination; it becomes a single page so that
-        # citations still have a page slot to fill.
-        pages = [Page(page_number=1, text=content.decode("utf-8", errors="replace"))]
+        pages = paginate_text(content.decode("utf-8", errors="replace"))
 
     # Runs for plain text too, but in a gentler mode: a .md file still wants
     # its line endings and stray spaces normalized, while keeping the
@@ -114,6 +112,26 @@ def _build(path: Path, display_name: str, content: bytes) -> RawDocument:
         source_file=display_name,
         pages=pages,
     )
+
+
+def paginate_text(text: str) -> list[Page]:
+    """Split plain text into pages on form feeds.
+
+    U+000C FORM FEED is the ASCII page separator, and paginated plain text
+    really does use it: RFC 2616 carries 176 of them, one at each page break.
+    Honouring it matters for more than page numbers in citations. Repeated
+    header and footer removal works by finding lines that recur across pages,
+    so a paginated document flattened into a single page has no recurrence to
+    detect, and every running head survives into the chunks — RFC 2616 was
+    carrying "Fielding, et al. Standards Track [Page 65]" and "RFC 2616
+    HTTP/1.1 June 1999" into the middle of retrieved text, where they were
+    embedded, retrieved and fed to the model as though they were content.
+
+    Text with no form feed is a single page, which is the honest answer for a
+    Markdown file or a note: it has no pagination to report.
+    """
+    parts = text.split("\f")
+    return [Page(page_number=number, text=part) for number, part in enumerate(parts, start=1)]
 
 
 def _check_supported(suffix: str, filename: str) -> None:

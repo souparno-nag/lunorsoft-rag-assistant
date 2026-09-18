@@ -365,8 +365,17 @@ def _furniture_runs(lines: list[str], furniture: set[str]) -> set[int]:
 
 
 def _mask_digits(line: str) -> str:
-    """Normalize a line so that page-number variants collapse to one pattern."""
-    line = line.strip().lower()
+    """Normalize a line so that page-number variants collapse to one pattern.
+
+    Internal whitespace is collapsed as well as masked digits, because a
+    fixed-width document pads its furniture to keep the page number
+    right-aligned: RFC 2616's footer reads "... [Page 9]" on one page and
+    "... [Page 10]" on the next, with one space fewer before the bracket. Those
+    are the same running footer, and without collapsing they hash to different
+    patterns, each too rare to reach the recurrence threshold — which is why
+    that footer survived into the text and was being retrieved as content.
+    """
+    line = _HORIZONTAL_RUNS.sub(" ", line.strip().lower())
     # A line that is nothing but a roman numeral is a page number. Matching the
     # whole line only, so that ordinary words are never mistaken for numerals.
     if _ROMAN_NUMERAL.fullmatch(line):
