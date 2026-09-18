@@ -62,7 +62,7 @@ config and schema stubs importable without error.
 
 | ID | Status | Task | Deps | Prio | Eff | Files |
 | --- | --- | --- | --- | --- | --- | --- |
-| T1.1 | ☐ | Document loader — accept one PDF; return normalized `RawDocument`; carry `doc_id` + `source_file` from the start (enables multi-doc later) | T0.5 | MUST | S | `src/ingest/loader.py` |
+| T1.1 | ☑ | Document loader — accept one PDF; return normalized `RawDocument`; carry `doc_id` + `source_file` from the start (enables multi-doc later) | T0.5 | MUST | S | `src/ingest/loader.py` |
 | T1.2 | ☐ | Text extraction with `pdfplumber` (PyPDF fallback); capture **page numbers** as metadata | T1.1 | MUST | M | `src/ingest/extract.py` |
 | T1.3 | ☐ | Preprocessing: whitespace normalization, de-hyphenation, strip repeated headers/footers | T1.2 | MUST | S | `src/ingest/extract.py` |
 | T1.4 | ☐ | **Basic** chunking: `RecursiveCharacterTextSplitter` with size+overlap from config; emit `Chunk` objects with full metadata | T1.2, T0.5 | MUST | S | `src/ingest/chunker.py` |
