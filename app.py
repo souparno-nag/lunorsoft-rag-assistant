@@ -1,9 +1,8 @@
 """Streamlit UI (see specs/design.md §11) — the walking-skeleton v1 for Phase 2.
 
-Two panels: upload and index documents, then ask a question about them. Each
-answer carries a confidence badge and the excerpts behind it. Conversation
-history (Phase 10) comes later — this version answers one question at a time
-from whatever is currently indexed, with no chat history kept between turns.
+Two panels: upload and index documents, then hold a conversation about them.
+Each answer carries a confidence badge and the excerpts behind it, and the
+transcript is kept for the session so follow-up questions can refer back.
 
 Indexing and retrieval both go through `Indexer`, which owns the vector store
 and the keyword index together, so the UI never has to remember that a
@@ -12,7 +11,7 @@ document becomes two index entries.
 
 import streamlit as st
 
-from src.models.schemas import AnswerEnvelope, Citation
+from src.models.schemas import AnswerEnvelope, Citation, Turn
 from src.index.indexer import Indexer
 from src.index.vector_store import IndexProviderMismatch
 from src.ingest.loader import load_bytes
@@ -274,46 +273,66 @@ def _citation_body(citation: Citation) -> str:
     return f"> {text}"
 
 
-def render_query(indexer: Indexer) -> None:
+def render_pipeline_caption(envelope: AnswerEnvelope) -> None:
+    """Say what the pipeline did to produce this answer.
+
+    The transparency touch of specs/design.md §11, so a demo can show the
+    difference a stage makes rather than assert it.
+    """
+    parts = [f"Query transform: {envelope.used_query_transform or 'none'}"]
+    parts.append(f"retrieved {envelope.retrieved_k} chunk(s)")
+    parts.append(f"used {envelope.final_k} in the answer's context")
+    st.caption(" · ".join(parts))
+
+
+def render_turn(turn: Turn) -> None:
+    """Redraw one exchange, with the evidence it was served with."""
+    with st.chat_message("user"):
+        st.markdown(turn.question)
+    with st.chat_message("assistant"):
+        st.markdown(turn.envelope.answer)
+        render_confidence(turn.envelope)
+        render_citations(turn.envelope)
+        render_pipeline_caption(turn.envelope)
+
+
+def render_chat(indexer: Indexer) -> None:
     st.subheader("2. Ask a question")
     has_documents = indexer.count() > 0
+    history: list[Turn] = st.session_state.setdefault("history", [])
 
-    # T2.4: querying is blocked, not just discouraged, while the index is
-    # empty — the input and button are disabled so there is nothing to submit,
-    # and the prompt below says plainly what to do instead.
-    question = st.text_input(
-        "Your question",
-        disabled=not has_documents,
-        placeholder="Upload and index a document first" if not has_documents else "What is …?",
-    )
-    ask = st.button("Ask", disabled=not has_documents)
+    for turn in history:
+        render_turn(turn)
 
+    # T2.4: querying is blocked, not merely discouraged, while the index is
+    # empty — the input is disabled so there is nothing to submit, and the
+    # prompt below says plainly what to do instead.
     if not has_documents:
         st.info("Upload and index a document above before asking a question.")
+    elif history and st.button("Clear conversation"):
+        st.session_state["history"] = []
+        st.rerun()
+
+    question = st.chat_input(
+        "Ask about your documents…" if has_documents else "Index a document first",
+        disabled=not has_documents,
+    )
+    if not question or not question.strip():
         return
 
-    if ask and not question.strip():
-        st.warning("Type a question first.")
-        return
+    with st.chat_message("user"):
+        st.markdown(question)
+    with st.spinner("Thinking…"):
+        try:
+            envelope = answer_question(question, indexer=indexer)
+        except (ValueError, RuntimeError) as exc:
+            st.error(f"Could not answer that question: {exc}")
+            return
 
-    if ask:
-        with st.spinner("Thinking…"):
-            try:
-                envelope = answer_question(question, indexer=indexer)
-            except (ValueError, RuntimeError) as exc:
-                st.error(f"Could not answer that question: {exc}")
-                return
-        st.markdown(envelope.answer)
-        render_confidence(envelope)
-        render_citations(envelope)
-        # Transparency touch from specs/design.md §11: say what the pipeline
-        # actually did, so a demo can show the difference a transform makes
-        # rather than assert it.
-        transform = envelope.used_query_transform or "none"
-        st.caption(
-            f"Query transform: {transform} · retrieved {envelope.retrieved_k} "
-            f"chunk(s) · used {envelope.final_k} in the answer's context."
-        )
+    history.append(Turn(question=question, envelope=envelope))
+    # Redraw from history, so the turn just added is rendered by exactly the
+    # same code as every earlier one and cannot drift from them.
+    st.rerun()
 
 
 def main() -> None:
@@ -332,7 +351,7 @@ def main() -> None:
 
     render_upload(indexer)
     st.divider()
-    render_query(indexer)
+    render_chat(indexer)
 
 
 if __name__ == "__main__":

@@ -86,6 +86,21 @@ class Citation:
 
 
 @dataclass
+class Turn:
+    """One exchange in a conversation.
+
+    The whole envelope is kept, not just the answer text, so a past turn can
+    be redrawn with the citations and confidence badge it was originally
+    served with — Streamlit re-runs the script on every interaction, and an
+    answer that lost its evidence on the next keystroke would be worse than
+    no history at all.
+    """
+
+    question: str
+    envelope: "AnswerEnvelope"
+
+
+@dataclass
 class AnswerEnvelope:
     answer: str
     citations: list[Citation] = field(default_factory=list)

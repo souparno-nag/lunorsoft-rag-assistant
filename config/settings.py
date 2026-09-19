@@ -173,6 +173,13 @@ QUERY_TRANSFORM_MODE: QueryTransformMode = "multi_query"
 # is always retrieved for as well, so 3 here means four rankings per retriever.
 MULTI_QUERY_COUNT = 3
 
+# Conversation history
+# How many past turns are shown to the history-aware rewrite. The transcript
+# itself is not truncated — a reader should see their whole conversation — but
+# the rewrite only needs the recent turns a follow-up could be referring to,
+# and every extra turn is prompt tokens spent on a shared free-tier budget.
+HISTORY_TURNS = 4
+
 # Generation
 MAX_CONTEXT_TOKENS = 6000
 
