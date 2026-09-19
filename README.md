@@ -250,41 +250,6 @@ support", rather than served with a confident badge.
 
 ---
 
-## AI tools disclosure
-
-**Claude (Anthropic), used through the Claude Code CLI**, assisted in building
-this project. It was used for implementation, debugging, measurement and
-documentation — including this README.
-
-How the work was divided:
-
-- **Specification and direction were human.** The project is spec-driven:
-  [`specs/requirements.md`](specs/requirements.md) fixes the scope,
-  [`specs/design.md`](specs/design.md) the architecture, and
-  [`specs/tasks.md`](specs/tasks.md) breaks it into tasks with a status column.
-  The order tasks were tackled in, and the decisions at each fork — which
-  fusion method, whether to disable re-ranking for deployment, whether
-  conversation history needed a database — were made by the developer, with the
-  assistant presenting measurements and a recommendation.
-- **Implementation was assisted.** Each task was written, run and measured
-  against real documents rather than accepted as written. Several designs were
-  revised because the measurement contradicted them.
-- **Every claim in this README is from a run that happened**, not an estimate.
-  The comparison tables come from scripts executed against the corpora named.
-
-No AI attribution appears in commit messages, by preference — the commit
-history is the developer's record of the work, and every commit was reviewed
-before it was made.
-
-**Distinct from the above**, the assistant *is* the product: this application
-calls Groq (`gpt-oss-120b` for answers, `gpt-oss-20b` for query transformation
-and the grounding judge), Google Gemini for embeddings when deployed, and two
-local `sentence-transformers` models. Those are the system's runtime
-dependencies, listed under [Tech stack](#tech-stack), not tools used to write
-it.
-
----
-
 ## Privacy note — Gemini's unpaid tier
 
 The deployed app embeds documents with **Gemini on Google's free tier**, where
