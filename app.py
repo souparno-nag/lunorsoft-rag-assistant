@@ -27,6 +27,11 @@ st.set_page_config(page_title="Lunorsoft RAG Assistant", page_icon="📚")
 # see what the model had available, which a first line or two answers.
 UNCITED_PREVIEW_CHARS = 280
 
+# The confidence bands of specs/design.md §5.6, in the colours §5.7 asks for.
+# The band is computed in src/generate/grounding.py from the configured
+# cutoffs; this only decides how it looks.
+CONFIDENCE_COLOURS = {"high": "green", "medium": "orange", "low": "red"}
+
 
 @st.cache_resource(show_spinner=False)
 def get_indexer() -> Indexer:
@@ -89,6 +94,43 @@ def render_upload(indexer: Indexer) -> None:
             )
     else:
         st.info("No documents indexed yet — upload one above to get started.")
+
+
+def render_confidence(envelope: AnswerEnvelope) -> None:
+    """Show how far the answer was verified against its sources.
+
+    Nothing is rendered when there is no score. That is not a missing value to
+    paper over: a refusal asserts nothing about the documents, so there is no
+    claim to have checked, and a badge beside "I could not find this" would be
+    telling the reader something that was never measured.
+
+    The tooltip names the method as well as the score, because the two
+    measures do not mean the same thing — a judge read the claims, an overlap
+    count only compared vocabulary — and a reader deciding whether to trust an
+    answer deserves to know which one produced the number.
+    """
+    band = envelope.confidence
+    if band is None or envelope.faithfulness_score is None:
+        return
+
+    if envelope.grounding_method == "judge":
+        how = (
+            f"{envelope.faithfulness_score:.0%} of the answer's claims were "
+            "judged supported by the retrieved excerpts."
+        )
+    else:
+        how = (
+            f"{envelope.faithfulness_score:.0%} of the answer's wording appears "
+            "in the retrieved excerpts. The claim-by-claim check was "
+            "unavailable, so this is a weaker word-overlap estimate and is "
+            "capped at medium confidence."
+        )
+
+    st.badge(
+        f"{band} confidence",
+        color=CONFIDENCE_COLOURS.get(band, "gray"),
+        help=how,
+    )
 
 
 def render_citations(envelope: AnswerEnvelope) -> None:
@@ -176,6 +218,7 @@ def render_query(indexer: Indexer) -> None:
                 st.error(f"Could not answer that question: {exc}")
                 return
         st.markdown(envelope.answer)
+        render_confidence(envelope)
         render_citations(envelope)
         # Transparency touch from specs/design.md §11: say what the pipeline
         # actually did, so a demo can show the difference a transform makes
