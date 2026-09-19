@@ -159,7 +159,7 @@ transformation on than off. Transform mode is config-switchable for the demo.
 | T7.1 | ☑ | LLM-as-judge (Groq): score whether answer claims are supported by retrieved context → `faithfulness_score` + verdict | T2.1 | MUST | M | `src/generate/grounding.py` |
 | T7.2 | ☑ | Overlap-heuristic fallback (cheaper) when judge is unavailable | T7.1 | MUST | S | `src/generate/grounding.py` |
 | T7.3 | ☑ | Map score → confidence band (green/amber/red) using config cutoffs; on low score, downgrade/refuse per `design.md §5.6` | T7.1, T0.4 | MUST | S | `src/generate/grounding.py` |
-| T7.4 | ☐ | Add grounding step after generation in `pipeline.py`; populate `faithfulness_score` + `confidence` | T7.3, T2.2 | MUST | S | `src/query/pipeline.py` |
+| T7.4 | ☑ | Add grounding step after generation in `pipeline.py`; populate `faithfulness_score` + `confidence` | T7.3, T2.2 | MUST | S | `src/query/pipeline.py` |
 
 **Definition of done (Phase 7):** every answer carries a faithfulness score;
 an answer unsupported by the docs is flagged/refused rather than shown as
