@@ -222,14 +222,35 @@ def render_citations(envelope: AnswerEnvelope) -> None:
         # Cited first, then the rest in the order the model saw them, so the
         # evidence is at the top rather than interleaved with what went unused.
         ordered = cited + [c for c in envelope.citations if not c.cited]
+        ambiguous = _ambiguous_names(envelope.citations)
         for citation in ordered:
-            st.markdown(_citation_heading(citation))
+            st.markdown(_citation_heading(citation, ambiguous))
             st.markdown(_citation_body(citation))
 
 
-def _citation_heading(citation: Citation) -> str:
+def _ambiguous_names(citations: list[Citation]) -> set[str]:
+    """Filenames that belong to more than one document in this answer.
+
+    Nothing stops two uploads being called "report.pdf" while holding
+    different documents — `doc_id` is derived from the bytes, so the index
+    keeps them apart perfectly well. It is the citation list that would show
+    them as the same source, which is precisely where a reader is trying to
+    tell sources apart.
+    """
+    seen: dict[str, set[str]] = {}
+    for citation in citations:
+        seen.setdefault(citation.source_file, set()).add(citation.doc_id)
+    return {name for name, ids in seen.items() if len(ids) > 1}
+
+
+def _citation_heading(citation: Citation, ambiguous: set[str] = frozenset()) -> str:
     """`[2] paper.pdf · p. 8 · 5.4 Regularization` — the trail to the source."""
-    parts = [f"**[{citation.marker}]** {citation.source_file}"]
+    name = citation.source_file
+    if name in ambiguous and citation.doc_id:
+        # The doc_id already ends in a short hash of the file's contents,
+        # which is exactly the distinguishing part.
+        name = f"{name} ({citation.doc_id.rsplit('-', 1)[-1]})"
+    parts = [f"**[{citation.marker}]** {name}"]
     if citation.page is not None:
         parts.append(f"p. {citation.page}")
     if citation.section:

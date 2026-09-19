@@ -75,6 +75,11 @@ class Citation:
     source_file: str
     snippet: str
     marker: int
+    # Two uploaded files can carry the same name and different contents, and
+    # `doc_id` is what tells them apart — it is derived from the bytes, not the
+    # filename. Carried here so a citation can be disambiguated when a corpus
+    # holds two documents called "report.pdf".
+    doc_id: str = ""
     page: int | None = None
     section: str | None = None
     cited: bool = False

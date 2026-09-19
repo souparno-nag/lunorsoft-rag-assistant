@@ -116,6 +116,7 @@ def _citations(answer: str, context: list[Chunk]) -> list[Citation]:
             source_file=chunk.source_file,
             snippet=chunk.chunk_text,
             marker=marker,
+            doc_id=chunk.doc_id,
             page=chunk.page_number,
             section=chunk.section_header,
             cited=marker in used,
