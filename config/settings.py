@@ -157,6 +157,8 @@ SPARSE_WEIGHT = 0.5
 # Query transformation
 QueryTransformMode = Literal["none", "rewrite", "multi_query", "hyde"]
 QUERY_TRANSFORM_MODE: QueryTransformMode = "multi_query"
+# How many *additional* phrasings multi-query generates. The original question
+# is always retrieved for as well, so 3 here means four rankings per retriever.
 MULTI_QUERY_COUNT = 3
 
 # Generation

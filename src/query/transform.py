@@ -42,6 +42,14 @@ _PRESERVE = (
     "quotes. Do not expand, translate or tidy them."
 )
 
+_MULTI_QUERY_PROMPT = f"""You generate alternative phrasings of a user's question, so that a document retrieval system has several ways to find the answer.
+
+{_PRESERVE}
+
+Beyond those fixed terms, vary the wording as much as you can: use synonyms, and use the technical vocabulary a document on this subject would be likely to use, even when the asker did not. A phrasing that reaches for the document's own words is the most useful one you can write.
+
+Write one phrasing per line. Do not number them, do not answer the question, and write nothing else."""
+
 _REWRITE_PROMPT = f"""You rewrite a user's question into a single clear, self-contained search query for a document retrieval system.
 
 {_PRESERVE}
@@ -95,6 +103,8 @@ def transform_query(
         return TransformedQuery.untransformed(query)
     if mode == "rewrite":
         return _rewrite(query, llm)
+    if mode == "multi_query":
+        return _multi_query(query, llm)
 
     logger.warning(
         "Unknown QUERY_TRANSFORM_MODE %r; retrieving with the original query", mode
@@ -115,6 +125,34 @@ def _rewrite(query: str, llm: BaseChatModel | None) -> TransformedQuery:
         mode="rewrite",
         dense_queries=[rewritten],
         sparse_queries=[rewritten],
+    )
+
+
+def _multi_query(query: str, llm: BaseChatModel | None) -> TransformedQuery:
+    """Retrieve for several phrasings of the question and pool the results.
+
+    The point is vocabulary, not variety for its own sake. A reader asks
+    "whats that code for when you gotta pay"; the document says "Payment
+    Required". Rewriting cannot bridge that, because it is forbidden from
+    adding what it was not given — but generating several phrasings *invites*
+    the model to spend what it knows about the subject, and one of them is
+    likely to reach for the term the document actually uses.
+
+    The original question is always kept alongside the paraphrases. It is the
+    only phrasing guaranteed to contain the asker's exact words, and pooling
+    means an extra ranking can only add candidates, never remove them.
+    """
+    paraphrases = _ask(_MULTI_QUERY_PROMPT, query, llm)[: settings.MULTI_QUERY_COUNT]
+    if not paraphrases:
+        return TransformedQuery.untransformed(query)
+
+    queries = [query, *paraphrases]
+    logger.info("Multi-query: %d phrasing(s) from %r: %s", len(paraphrases), query, paraphrases)
+    return TransformedQuery(
+        original=query,
+        mode="multi_query",
+        dense_queries=queries,
+        sparse_queries=queries,
     )
 
 
