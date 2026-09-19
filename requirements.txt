@@ -13,7 +13,25 @@ langchain-groq>=1.1,<2             # Groq is chat-only and has no embeddings end
 # Embeddings — remote path (deployed) and local path (offline)
 langchain-google-genai>=4.4,<5
 langchain-huggingface>=1.2,<2
-sentence-transformers>=6.0,<7      # local MiniLM embeddings + cross-encoder reranker; pulls in torch
+sentence-transformers>=6.0,<7      # local MiniLM embeddings + cross-encoder reranker; needs torch
+
+# Torch, CPU build only. sentence-transformers requires torch, and the default
+# wheel on PyPI is the CUDA build — which on a server with no GPU costs 1.2 GB
+# of torch plus 3.2 GB of nvidia/ libraries on disk, and 1246 MiB resident once
+# the reranker is loaded. That is over the deployment tier's ~1 GB ceiling
+# before a single request is served.
+#
+# Measured, same code, same model:
+#   CUDA wheel   torch import 498 MiB, reranker stack 1246 MiB, 4.4 GB on disk
+#   CPU wheel    torch import 217 MiB, reranker stack  498 MiB, 769 MB on disk
+#   full deployed stack on the CPU wheel: 654 MiB steady state
+#
+# The version is pinned exactly rather than given a range. A "+cpu" build only
+# exists on PyTorch's own index, and an unpinned `torch` resolves to the CUDA
+# wheel from PyPI even when the CPU index is also listed — so the pin is what
+# actually selects it. Nothing here uses a GPU, so there is nothing to lose.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.0+cpu
 
 # Indexes
 chromadb>=1.5,<2
