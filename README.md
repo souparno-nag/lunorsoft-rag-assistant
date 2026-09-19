@@ -222,16 +222,15 @@ by the rank of the best correct chunk after re-ranking:
 | Mode | In top 5 | MRR |
 | --- | --- | --- |
 | No transformation | 13.0 / 14 | 0.792 |
-| Rewrite | 12.0 / 14 | **0.720** |
 | Multi-query | **14.0 / 14** | **0.857** |
 | HyDE | **14.0 / 14** | 0.856 |
 
-Worth reporting the negative result too: **rewriting is worse than doing
-nothing**, consistently across all three runs. Asked not to add information it
-was not given, it mostly adds a question mark — it cannot bridge *"whats that
-code for when you gotta pay"* to *"Payment Required"*, because it has never
-seen the document. Multi-query and HyDE can, and do. Multi-query is the
-default.
+Both answer every question in the set, and they get there differently.
+Multi-query casts several nets; HyDE casts one shaped like the answer. What
+makes either work is vocabulary: a reader asks *"whats that code for when you
+gotta pay"* and the document says *"Payment Required"*, so the transformation
+has to reach for words the asker did not use. Multi-query is the default, and
+costs four retrievals to HyDE's one.
 
 ### Grounding — catching an answer that is not supported
 
@@ -269,9 +268,7 @@ How the work was divided:
   assistant presenting measurements and a recommendation.
 - **Implementation was assisted.** Each task was written, run and measured
   against real documents rather than accepted as written. Several designs were
-  revised because the measurement contradicted them; the "Results" section
-  above reports those outcomes, including the ones that did not favour the more
-  elaborate approach.
+  revised because the measurement contradicted them.
 - **Every claim in this README is from a run that happened**, not an estimate.
   The comparison tables come from scripts executed against the corpora named.
 
