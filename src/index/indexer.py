@@ -68,6 +68,15 @@ class Indexer:
         """Map of `doc_id` to source filename for everything indexed."""
         return self.vectors.indexed_documents()
 
+    def chunk_counts(self) -> dict[str, int]:
+        """How many chunks each document contributed, keyed by `doc_id`.
+
+        Read from the keyword side, which holds every chunk in memory, rather
+        than from Chroma, which would have to fetch them all back to count. The
+        two agree whenever `needs_rebuild` is False.
+        """
+        return self.keywords.chunk_counts()
+
     @property
     def needs_rebuild(self) -> bool:
         """Whether the two indexes hold different numbers of chunks.

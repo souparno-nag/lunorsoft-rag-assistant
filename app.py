@@ -1,10 +1,9 @@
 """Streamlit UI (see specs/design.md §11) — the walking-skeleton v1 for Phase 2.
 
-Two panels: upload-and-index a document, then ask a question about it.
-Citations and a confidence badge (Phase 8), multi-file upload (Phase 9) and
-conversation history (Phase 10) come later — this version answers one
-question at a time from whatever is currently indexed, with no chat history
-kept between turns.
+Two panels: upload and index documents, then ask a question about them. Each
+answer carries a confidence badge and the excerpts behind it. Conversation
+history (Phase 10) comes later — this version answers one question at a time
+from whatever is currently indexed, with no chat history kept between turns.
 
 Indexing and retrieval both go through `Indexer`, which owns the vector store
 and the keyword index together, so the UI never has to remember that a
@@ -53,47 +52,113 @@ def ingest_uploaded_file(uploaded_file, indexer: Indexer) -> tuple[int, str]:
     return n_chunks, document.doc_id
 
 
+def index_uploaded_files(uploaded_files, indexer: Indexer) -> None:
+    """Index a batch of uploads, reporting each file's outcome separately.
+
+    One unreadable file does not abandon the batch (specs/design.md §14): a
+    scanned PDF with no text layer, or a file whose extension lies about its
+    contents, is reported and skipped while the rest are indexed. Uploading
+    ten documents and losing all of them to the fourth would be the worst
+    possible behaviour here.
+    """
+    indexed: list[str] = []
+    failed: list[tuple[str, str]] = []
+
+    progress = st.progress(0.0)
+    for position, uploaded in enumerate(uploaded_files, start=1):
+        progress.progress(
+            (position - 1) / len(uploaded_files), text=f"Indexing {uploaded.name}…"
+        )
+        try:
+            n_chunks, _doc_id = ingest_uploaded_file(uploaded, indexer)
+        except (ValueError, RuntimeError) as exc:
+            # ValueError: unsupported type, empty or unreadable document.
+            # RuntimeError: embedding failure. Both are the document's
+            # problem, not the batch's.
+            failed.append((uploaded.name, str(exc)))
+        else:
+            indexed.append(f"{uploaded.name} ({n_chunks} chunks)")
+    progress.empty()
+
+    if indexed:
+        st.success("Indexed " + ", ".join(indexed) + ".")
+    for name, reason in failed:
+        st.error(f"Skipped {name}: {reason}")
+
+
+def render_index_status(indexer: Indexer) -> None:
+    """List what is currently indexed, and offer to clear it."""
+    if not indexer.count():
+        st.info("No documents indexed yet — upload one above to get started.")
+        return
+
+    documents = indexer.indexed_documents()
+    counts = indexer.chunk_counts()
+    st.caption(f"{indexer.count()} chunk(s) indexed from {len(documents)} document(s):")
+    for doc_id, source_file in sorted(documents.items(), key=lambda pair: pair[1]):
+        chunks = counts.get(doc_id)
+        suffix = f" — {chunks} chunk(s)" if chunks else ""
+        st.markdown(f"- `{source_file}`{suffix}")
+
+    # An index built before the keyword half existed has vectors but no BM25
+    # corpus, so hybrid search would quietly fall back to dense-only rather
+    # than fail. Say so instead of letting it look like a retrieval problem.
+    if indexer.needs_rebuild:
+        st.warning(
+            "This index predates keyword search, so only vector retrieval is "
+            "active. Clear it and re-index to enable hybrid search."
+        )
+
+    render_clear_index(indexer)
+
+
+def render_clear_index(indexer: Indexer) -> None:
+    """The 'rebuild index' action of specs/design.md §11, as a two-step.
+
+    Named for what it does. The design calls this "rebuild index", but nothing
+    here could rebuild one: uploads are streamed into the index and never kept,
+    so once the index is gone the documents have to be uploaded again. Offering
+    a button called "rebuild" that silently destroys the only copy of the
+    corpus would be a lie in the one place it costs most.
+
+    Two steps for the same reason — it cannot be undone from inside the app.
+    """
+    if st.session_state.get("confirm_clear"):
+        st.warning(
+            f"Delete all {indexer.count()} indexed chunk(s)? The documents "
+            "themselves are not stored, so they will need uploading again."
+        )
+        confirm, cancel = st.columns(2)
+        if confirm.button("Yes, clear the index", type="primary"):
+            indexer.reset()
+            st.session_state["confirm_clear"] = False
+            st.success("Index cleared.")
+            st.rerun()
+        if cancel.button("Cancel"):
+            st.session_state["confirm_clear"] = False
+            st.rerun()
+        return
+
+    if st.button("Clear index"):
+        st.session_state["confirm_clear"] = True
+        st.rerun()
+
+
 def render_upload(indexer: Indexer) -> None:
-    st.subheader("1. Add a document")
+    st.subheader("1. Add documents")
     uploaded = st.file_uploader(
-        "Upload a PDF, TXT or Markdown file",
+        "Upload one or more PDF, TXT or Markdown files",
         type=["pdf", "txt", "md", "markdown"],
+        accept_multiple_files=True,
     )
     # Indexing runs on an explicit button press rather than automatically on
-    # upload: the file uploader's value survives every rerun of this script,
-    # so an automatic trigger would re-embed the same file on every unrelated
-    # interaction (e.g. typing a question) for as long as it stayed uploaded.
-    if uploaded is not None and st.button("Index document"):
-        with st.spinner(f"Indexing {uploaded.name}…"):
-            try:
-                n_chunks, _doc_id = ingest_uploaded_file(uploaded, indexer)
-            except (ValueError, RuntimeError) as exc:
-                # ValueError: unsupported type, empty/unreadable document
-                # (src/ingest/loader.py, src/ingest/extract.py). RuntimeError:
-                # embedding failure (src/index/embeddings.py). Per
-                # specs/design.md §14, a bad document is surfaced, not silent.
-                st.error(f"Could not index {uploaded.name}: {exc}")
-            else:
-                st.success(f"Indexed {n_chunks} chunk(s) from {uploaded.name}.")
+    # upload: the file uploader's value survives every rerun of this script, so
+    # an automatic trigger would re-embed the same files on every unrelated
+    # interaction (e.g. typing a question) for as long as they stayed uploaded.
+    if uploaded and st.button(f"Index {len(uploaded)} file(s)"):
+        index_uploaded_files(uploaded, indexer)
 
-    count = indexer.count()
-    if count:
-        docs = indexer.indexed_documents()
-        st.caption(
-            f"{count} chunk(s) indexed from {len(docs)} document(s): "
-            + ", ".join(sorted(docs.values()))
-        )
-        # An index built before the keyword half existed has vectors but no
-        # BM25 corpus, so hybrid search would quietly fall back to dense-only
-        # rather than fail. Say so instead of letting it look like a retrieval
-        # quality problem.
-        if indexer.needs_rebuild:
-            st.warning(
-                "This index predates keyword search, so only vector retrieval "
-                "is active. Re-index the documents to enable hybrid search."
-            )
-    else:
-        st.info("No documents indexed yet — upload one above to get started.")
+    render_index_status(indexer)
 
 
 def render_confidence(envelope: AnswerEnvelope) -> None:

@@ -129,6 +129,13 @@ class KeywordIndex:
         """Map of `doc_id` to source filename for everything in the index."""
         return {chunk.doc_id: chunk.source_file for chunk in self._chunks.values()}
 
+    def chunk_counts(self) -> dict[str, int]:
+        """How many chunks each document contributed, keyed by `doc_id`."""
+        counts: dict[str, int] = {}
+        for chunk in self._chunks.values():
+            counts[chunk.doc_id] = counts.get(chunk.doc_id, 0) + 1
+        return counts
+
     # --- lifecycle --------------------------------------------------------
 
     def delete_document(self, doc_id: str) -> None:

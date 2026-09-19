@@ -184,7 +184,7 @@ confidence badge.
 
 | ID | Status | Task | Deps | Prio | Eff | Files |
 | --- | --- | --- | --- | --- | --- | --- |
-| T9.1 | ☐ | UI: upload multiple files; list indexed docs; "rebuild index" action | T2.3 | MUST | M | `app.py` |
+| T9.1 | ☑ | UI: upload multiple files; list indexed docs; "rebuild index" action | T2.3 | MUST | M | `app.py` |
 | T9.2 | ☐ | Confirm indexes + retrieval span all docs; citations disambiguate across files (relies on `doc_id`/`source_file` from T1.1) | T9.1, T4.3 | MUST | S | `src/index/*` |
 
 **Definition of done (Phase 9):** questions answer correctly across a
