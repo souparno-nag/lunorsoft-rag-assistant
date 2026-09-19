@@ -240,7 +240,7 @@ README. If unbuilt, document as future work (per `requirements.md §4`).
 | T13.1 | ☑ | Write `README.md`: what it does, architecture (from `design.md`), **why-beyond-naive-RAG** rationale, tech stack, setup/run steps | all MUST | MUST | M | `README.md` |
 | T13.2 | ☑ | Include a **before/after example query** (naive vs full pipeline) using the examples saved in T4.4/T5.3/T6.4 | T13.1 | MUST | S | `README.md` |
 | T13.3 | ☑ | **AI tools disclosure** (mandatory, brief §02/§10): list tools used + how | T13.1 | MUST | S | `README.md` |
-| T13.4 | ☐ | Gemini unpaid-tier privacy note (submitted content may be used to improve Google products) | T13.1 | MUST | S | `README.md` |
+| T13.4 | ☑ | Gemini unpaid-tier privacy note (submitted content may be used to improve Google products) | T13.1 | MUST | S | `README.md` |
 | T13.5 | ☐ | Limitations / future work (incl. eval harness if unbuilt) | T13.1 | MUST | S | `README.md` |
 | T13.6 | ☐ | Verify repo is public; all links open in incognito; final `requirements.txt` + `.env.example` present | T13.1 | MUST | S | repo |
 | T13.7 | ☐ | (If not deployed) record a short screen-recording demo as the live-link substitute | T2.5 | MUST* | S | link |

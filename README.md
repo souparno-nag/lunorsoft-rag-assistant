@@ -283,3 +283,26 @@ and the grounding judge), Google Gemini for embeddings when deployed, and two
 local `sentence-transformers` models. Those are the system's runtime
 dependencies, listed under [Tech stack](#tech-stack), not tools used to write
 it.
+
+---
+
+## Privacy note — Gemini's unpaid tier
+
+The deployed app embeds documents with **Gemini on Google's free tier**, where
+**content submitted may be used to improve Google's products**. Paid tiers
+carry different terms.
+
+For this project that is an acceptable trade: the sample corpus is a set of
+public documents — a published paper, a NIST standard, an RFC — and nothing
+confidential passes through it.
+
+It is not acceptable for everyone. **Do not upload confidential, personal or
+proprietary documents to the public demo.** If you need to ask questions of
+private material, run it locally with the default `EMBEDDING_PROVIDER=local`:
+embedding then happens on your own machine with the MiniLM model and no
+document text leaves it.
+
+Note that this applies to the embedding provider specifically. Answer
+generation always calls Groq, so the *question* and the *retrieved excerpts*
+are sent there on every query, including locally. Only the embedding step is
+avoidable by switching provider.
