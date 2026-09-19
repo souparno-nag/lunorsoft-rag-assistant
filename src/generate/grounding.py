@@ -154,7 +154,11 @@ def judge(
     if not chunks:
         raise GroundingUnavailable("no context to check the answer against")
 
-    llm = llm or get_llm(settings.GROQ_JUDGE_MODEL, settings.JUDGE_MAX_TOKENS)
+    llm = llm or get_llm(
+        settings.GROQ_JUDGE_MODEL,
+        settings.JUDGE_MAX_TOKENS,
+        settings.JUDGE_REASONING_EFFORT,
+    )
     message = (
         f"Source excerpts:\n\n{_format_context(chunks)}\n\n"
         f"Answer to check:\n\n{answer}"
@@ -166,6 +170,20 @@ def judge(
         )
     except Exception as exc:
         raise GroundingUnavailable(f"the judge could not be reached: {exc}") from exc
+
+    # A reply cut off by the token limit must not be scored. The verdicts are
+    # counted, so a list truncated after three of eight claims yields a score
+    # over those three alone — and a model works through an answer in order,
+    # listing what it could verify as it goes, so what gets cut is
+    # disproportionately the later, shakier claims. Truncation therefore does
+    # not add noise, it inflates: the fabricated answer that scored 0.00 in
+    # T7.1 would have scored 1.00 had it been cut after its first supported
+    # clause. Falling back to the weaker measure is much safer than reporting
+    # a confident number computed from the easy half of the answer.
+    if response.response_metadata.get("finish_reason") == "length":
+        raise GroundingUnavailable(
+            "the judge's reply was cut off before it finished ruling on the claims"
+        )
 
     supported, unsupported = _count_verdicts(str(response.content or ""))
     total = supported + unsupported

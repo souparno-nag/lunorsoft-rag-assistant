@@ -56,6 +56,20 @@ GROQ_MODEL = "openai/gpt-oss-120b"
 # so a generous cap on a three-line paraphrase is charged whether or not it is
 # used — which is why the auxiliary calls set their own, much smaller limit.
 GROQ_SMALL_MODEL = "openai/gpt-oss-20b"
+# GPT-OSS emits reasoning tokens before its answer and charges them to the same
+# budget. The judge spent 646 of them to produce 6 verdict lines at the default
+# effort, and 164 to produce the same 6 at "low" — ruling on whether a sentence
+# appears in a passage is classification against a fixed output format, and the
+# deliberation was being paid for and thrown away.
+#
+# Query transformation deliberately does NOT get this treatment, though it
+# looked like the same kind of mechanical task. Measured on "How many heads
+# does the base model use?", the correct chunk reached the final context in 3
+# of 3 trials at the default effort and 0 of 3 at "low". Writing a paraphrase
+# that reaches for the document's own vocabulary is the entire value of
+# multi-query (T6.2), and that is generative work: the model thinking about
+# the subject is the part doing the work, not overhead to be trimmed.
+JUDGE_REASONING_EFFORT = "low"
 GROQ_JUDGE_MODEL = GROQ_SMALL_MODEL
 GROQ_TRANSFORM_MODEL = GROQ_SMALL_MODEL
 LLM_TEMPERATURE = 0.0
@@ -186,7 +200,11 @@ MAX_CONTEXT_TOKENS = 6000
 # Grounding
 # The judge answers one line per claim, so its budget scales with how many
 # claims an answer makes; reasoning tokens count against it too.
-JUDGE_MAX_TOKENS = 512
+# Room for the verdicts *after* reasoning tokens. A truncated reply is refused
+# rather than scored (see src/generate/grounding.py), so this being too small
+# costs a fallback to the weaker measure rather than a wrong number — but it
+# still has to be generous enough that long answers get judged at all.
+JUDGE_MAX_TOKENS = 1024
 GROUNDING_THRESHOLD = 0.50
 CONFIDENCE_HIGH_CUTOFF = 0.75
 CONFIDENCE_MEDIUM_CUTOFF = 0.50

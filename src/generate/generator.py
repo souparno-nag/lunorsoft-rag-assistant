@@ -114,7 +114,9 @@ def generate_answer(
 
 
 def get_llm(
-    model: str | None = None, max_tokens: int | None = None
+    model: str | None = None,
+    max_tokens: int | None = None,
+    reasoning_effort: str | None = None,
 ) -> BaseChatModel:
     """Return a configured Groq chat model.
 
@@ -124,12 +126,16 @@ def get_llm(
     with generation and neither needs the larger model to do its job.
     """
     return _build(
-        model or settings.GROQ_MODEL, max_tokens or settings.LLM_MAX_TOKENS
+        model or settings.GROQ_MODEL,
+        max_tokens or settings.LLM_MAX_TOKENS,
+        reasoning_effort,
     )
 
 
 @lru_cache(maxsize=4)
-def _build(model: str, max_tokens: int) -> BaseChatModel:
+def _build(
+    model: str, max_tokens: int, reasoning_effort: str | None
+) -> BaseChatModel:
     from langchain_groq import ChatGroq
 
     if not settings.GROQ_API_KEY:
@@ -137,11 +143,13 @@ def _build(model: str, max_tokens: int) -> BaseChatModel:
             "GROQ_API_KEY is not set. Add it to .env — see .env.example."
         )
 
+    extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
     return ChatGroq(
         model=model,
         api_key=settings.GROQ_API_KEY,
         temperature=settings.LLM_TEMPERATURE,
         max_tokens=max_tokens,
+        **extra,
     )
 
 
