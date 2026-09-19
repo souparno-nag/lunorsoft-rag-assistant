@@ -409,7 +409,7 @@ def _split_section(
     groups = _group_by_topic(sentences, vectors) if vectors else [sentences]
     groups = _enforce_token_bounds(text, groups)
     spans = [(group[0][0], group[-1][1]) for group in groups if group]
-    return _with_overlap(spans, section)
+    return _with_overlap(text, spans, section)
 
 
 def _sentence_spans(text: str, section: Section) -> list[tuple[int, int]]:
@@ -546,7 +546,7 @@ def _hard_split(text: str, span: tuple[int, int]) -> list[tuple[int, int]]:
 
 
 def _with_overlap(
-    spans: list[tuple[int, int]], section: Section
+    text: str, spans: list[tuple[int, int]], section: Section
 ) -> list[tuple[int, int]]:
     """Extend each chunk backwards into its predecessor.
 
@@ -560,11 +560,39 @@ def _with_overlap(
     overlap is bounded by CHUNK_OVERLAP characters, and it is the context
     budget that trims by rank (specs/design.md §5.4) which actually protects
     the prompt.
+
+    The overlap is measured in characters, so it lands wherever it lands —
+    which is usually the middle of a word. That is corrected by snapping
+    forward to the next word boundary, because a chunk beginning "veloped by
+    NIST" is wrong twice over: it is what a reader is shown as the evidence
+    for an answer, and "veloped" is a term in the BM25 index that no document
+    contains.
     """
-    return [
-        (start if i == 0 else max(section.start, start - settings.CHUNK_OVERLAP), end)
-        for i, (start, end) in enumerate(spans)
-    ]
+    overlapped: list[tuple[int, int]] = []
+    for i, (start, end) in enumerate(spans):
+        if i == 0:
+            overlapped.append((start, end))
+            continue
+        opening = max(section.start, start - settings.CHUNK_OVERLAP)
+        overlapped.append((_next_word_boundary(text, opening, start), end))
+    return overlapped
+
+
+def _next_word_boundary(text: str, position: int, limit: int) -> int:
+    """First whole-word start at or after `position`, never beyond `limit`.
+
+    Moves forward rather than back, so an overlap can only ever be shorter
+    than requested — never longer, and never reaching into the chunk before
+    the one it is overlapping.
+    """
+    if position <= 0 or position >= limit or text[position - 1].isspace():
+        return position
+
+    while position < limit and not text[position].isspace():
+        position += 1
+    while position < limit and text[position].isspace():
+        position += 1
+    return position
 
 
 def _fixed_size_spans(text: str, section: Section) -> list[tuple[int, int]]:
