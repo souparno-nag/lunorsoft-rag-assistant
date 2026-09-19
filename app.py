@@ -114,9 +114,13 @@ def render_query(indexer: Indexer) -> None:
                 st.error(f"Could not answer that question: {exc}")
                 return
         st.markdown(envelope.answer)
+        # Transparency touch from specs/design.md §11: say what the pipeline
+        # actually did, so a demo can show the difference a transform makes
+        # rather than assert it.
+        transform = envelope.used_query_transform or "none"
         st.caption(
-            f"Retrieved {envelope.retrieved_k} chunk(s), "
-            f"used {envelope.final_k} in the answer's context."
+            f"Query transform: {transform} · retrieved {envelope.retrieved_k} "
+            f"chunk(s) · used {envelope.final_k} in the answer's context."
         )
 
 

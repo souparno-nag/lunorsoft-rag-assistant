@@ -1,14 +1,20 @@
 """Query pipeline — orchestrates the full query flow (see specs/design.md §5, §9).
 
-The shape as of Phase 5: retrieve with dense and sparse search fused together,
-re-rank the candidates with a cross-encoder, assemble a token-budgeted context
-from the survivors, generate a grounded answer. Query transformation (Phase 6)
-and the grounding check (Phase 7) slot in without this module's shape changing
-— transformation in front of retrieval, grounding after generation.
+The shape as of Phase 6: transform the question into the queries worth
+searching for, retrieve with dense and sparse search fused together, re-rank
+the candidates with a cross-encoder, assemble a token-budgeted context from the
+survivors, generate a grounded answer. The grounding check (Phase 7) slots in
+after generation without this module's shape changing.
 
 Retrieval is deliberately wide and selection deliberately narrow: K_RETRIEVE
-candidates are gathered so that recall is somebody else's problem, and
-K_FINAL survive re-ranking so that precision is.
+candidates are gathered so that recall is somebody else's problem, and K_FINAL
+survive re-ranking so that precision is.
+
+The transformed queries are used for retrieval and *only* for retrieval.
+Re-ranking and generation both work from the question as it was actually
+asked, because a paraphrase is a tool for finding candidates, not a better
+statement of what the user wants — and under HyDE the "query" is an invented
+passage that must never reach either stage.
 """
 
 import logging
@@ -19,6 +25,7 @@ from src.index.indexer import Indexer
 from src.models.schemas import AnswerEnvelope, Chunk
 from src.query.hybrid_retriever import HybridRetriever
 from src.query.reranker import rerank
+from src.query.transform import transform_query
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +46,13 @@ def answer_question(query: str, indexer: Indexer | None = None) -> AnswerEnvelop
 
     indexer = indexer or Indexer()
     retriever = HybridRetriever(indexer.vectors, indexer.keywords)
-    results = retriever.retrieve(query, k=settings.K_RETRIEVE)
+
+    transformed = transform_query(query)
+    results = retriever.retrieve_pooled(
+        transformed.dense_queries,
+        transformed.sparse_queries,
+        k=settings.K_RETRIEVE,
+    )
     retrieved_k = len(results)
 
     selected = rerank(query, results, k=settings.K_FINAL)
@@ -50,6 +63,7 @@ def answer_question(query: str, indexer: Indexer | None = None) -> AnswerEnvelop
 
     return AnswerEnvelope(
         answer=answer,
+        used_query_transform=transformed.mode,
         retrieved_k=retrieved_k,
         final_k=len(context),
     )
