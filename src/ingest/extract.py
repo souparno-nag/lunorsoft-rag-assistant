@@ -33,21 +33,28 @@ class ExtractionError(ValueError):
     """
 
 
-def extract_pages(path: str | Path) -> list[Page]:
+def extract_pages(path: str | Path, display_name: str | None = None) -> list[Page]:
     """Extract one `Page` per PDF page, numbered from 1.
 
     Page numbers are 1-based so they match what a reader sees in a PDF viewer,
     since they are carried through chunk metadata into citations.
+
+    `display_name` is the name to use when reporting trouble. An uploaded file
+    is staged in a temporary file before it can be read, so `path` is something
+    like `tmpnmc9mxq2.pdf` — a name that means nothing to the person who
+    uploaded it and is worse than useless in an error message telling them
+    which of their documents failed.
     """
     path = Path(path)
+    name = display_name or path.name
 
     try:
         pages = _extract_with_pdfplumber(path)
     except Exception as exc:  # pdfminer raises a wide range of parse errors
-        logger.warning("pdfplumber could not read %s (%s); using pypdf", path.name, exc)
-        return _extract_with_pypdf(path)
+        logger.warning("pdfplumber could not read %s (%s); using pypdf", name, exc)
+        return _extract_with_pypdf(path, name)
 
-    return _repair_run_together_pages(path, pages)
+    return _repair_run_together_pages(path, pages, name)
 
 
 def _extract_with_pdfplumber(path: Path) -> list[Page]:
@@ -61,7 +68,7 @@ def _extract_with_pdfplumber(path: Path) -> list[Page]:
         ]
 
 
-def _extract_with_pypdf(path: Path) -> list[Page]:
+def _extract_with_pypdf(path: Path, name: str) -> list[Page]:
     try:
         reader = PdfReader(str(path))
         return [
@@ -69,10 +76,12 @@ def _extract_with_pypdf(path: Path) -> list[Page]:
             for number, page in enumerate(reader.pages, start=1)
         ]
     except Exception as exc:
-        raise ExtractionError(f"{path.name} could not be read by pdfplumber or pypdf: {exc}") from exc
+        raise ExtractionError(
+            f"{name} could not be read by pdfplumber or pypdf: {exc}"
+        ) from exc
 
 
-def _repair_run_together_pages(path: Path, pages: list[Page]) -> list[Page]:
+def _repair_run_together_pages(path: Path, pages: list[Page], name: str) -> list[Page]:
     """Re-extract with pypdf any page whose words have lost their spaces.
 
     Done per page rather than per document so a single bad page does not cost
@@ -83,9 +92,9 @@ def _repair_run_together_pages(path: Path, pages: list[Page]) -> list[Page]:
         return pages
 
     try:
-        fallback = _extract_with_pypdf(path)
+        fallback = _extract_with_pypdf(path, name)
     except ExtractionError as exc:
-        logger.warning("%s: pypdf fallback unavailable (%s); keeping pdfplumber text", path.name, exc)
+        logger.warning("%s: pypdf fallback unavailable (%s); keeping pdfplumber text", name, exc)
         return pages
 
     repaired = 0
@@ -96,7 +105,7 @@ def _repair_run_together_pages(path: Path, pages: list[Page]) -> list[Page]:
 
     logger.info(
         "%s: %d/%d run-together page(s) re-extracted with pypdf",
-        path.name,
+        name,
         repaired,
         len(damaged),
     )

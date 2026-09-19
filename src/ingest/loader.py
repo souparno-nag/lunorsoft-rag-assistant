@@ -92,7 +92,9 @@ def _build(path: Path, display_name: str, content: bytes) -> RawDocument:
 
     from_layout = suffix in PDF_SUFFIXES
     if from_layout:
-        pages = extract_pages(path)
+        # `path` may be the temporary file an upload was staged in, so
+        # extraction is told the name the user would recognise.
+        pages = extract_pages(path, display_name)
     else:
         pages = paginate_text(content.decode("utf-8", errors="replace"))
 
