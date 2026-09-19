@@ -13,12 +13,19 @@ document becomes two index entries.
 
 import streamlit as st
 
+from src.models.schemas import AnswerEnvelope, Citation
 from src.index.indexer import Indexer
 from src.index.vector_store import IndexProviderMismatch
 from src.ingest.loader import load_bytes
 from src.query.pipeline import answer_question
 
 st.set_page_config(page_title="Lunorsoft RAG Assistant", page_icon="📚")
+
+# An excerpt the answer actually cited is shown whole — it is the evidence, and
+# truncating it would defeat the point of offering it. An excerpt that was
+# retrieved but not cited is shown as a preview: it is there so a reader can
+# see what the model had available, which a first line or two answers.
+UNCITED_PREVIEW_CHARS = 280
 
 
 @st.cache_resource(show_spinner=False)
@@ -84,6 +91,61 @@ def render_upload(indexer: Indexer) -> None:
         st.info("No documents indexed yet — upload one above to get started.")
 
 
+def render_citations(envelope: AnswerEnvelope) -> None:
+    """Show the excerpts behind an answer, cited ones first.
+
+    Collapsed by default: the answer is what was asked for, and the evidence
+    is one click away for a reader who wants to check it rather than something
+    they have to scroll past to reach the next question.
+    """
+    if not envelope.citations:
+        return
+
+    cited = [c for c in envelope.citations if c.cited]
+    total = len(envelope.citations)
+    if cited:
+        label = f"Sources — {len(cited)} of {total} excerpts cited"
+    else:
+        # Either a refusal, or an answer that neglected to cite. Both are worth
+        # being able to inspect: seeing what retrieval found is how a reader
+        # tells "the documents do not say" from "the search missed it".
+        label = f"Sources — {total} excerpts retrieved, none cited"
+
+    with st.expander(label):
+        # Cited first, then the rest in the order the model saw them, so the
+        # evidence is at the top rather than interleaved with what went unused.
+        ordered = cited + [c for c in envelope.citations if not c.cited]
+        for citation in ordered:
+            st.markdown(_citation_heading(citation))
+            st.markdown(_citation_body(citation))
+
+
+def _citation_heading(citation: Citation) -> str:
+    """`[2] paper.pdf · p. 8 · 5.4 Regularization` — the trail to the source."""
+    parts = [f"**[{citation.marker}]** {citation.source_file}"]
+    if citation.page is not None:
+        parts.append(f"p. {citation.page}")
+    if citation.section:
+        parts.append(citation.section)
+    trail = " · ".join(parts)
+    return f"{trail} — cited" if citation.cited else f"{trail} — not cited"
+
+
+def _citation_body(citation: Citation) -> str:
+    """The excerpt text as a blockquote.
+
+    Whitespace is collapsed to one line before rendering. Chunk text carries
+    the line breaks of the page it came from, which mean nothing here, and
+    flattening them also stops a line that begins with a `#` or a `-` in the
+    source document from being rendered as a heading or a list inside the
+    quote.
+    """
+    text = " ".join(citation.snippet.split())
+    if not citation.cited and len(text) > UNCITED_PREVIEW_CHARS:
+        text = text[:UNCITED_PREVIEW_CHARS].rstrip() + "…"
+    return f"> {text}"
+
+
 def render_query(indexer: Indexer) -> None:
     st.subheader("2. Ask a question")
     has_documents = indexer.count() > 0
@@ -114,6 +176,7 @@ def render_query(indexer: Indexer) -> None:
                 st.error(f"Could not answer that question: {exc}")
                 return
         st.markdown(envelope.answer)
+        render_citations(envelope)
         # Transparency touch from specs/design.md §11: say what the pipeline
         # actually did, so a demo can show the difference a transform makes
         # rather than assert it.
