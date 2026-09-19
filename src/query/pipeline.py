@@ -21,14 +21,18 @@ passage that must never reach either stage.
 import logging
 
 from config import settings
-from src.generate.generator import NOT_FOUND_MESSAGE, generate_answer
+from src.generate.generator import (
+    NOT_FOUND_MESSAGE,
+    cited_markers,
+    generate_answer,
+)
 from src.generate.grounding import (
     LOW_SUPPORT_MESSAGE,
     Grounding,
     check_grounding,
 )
 from src.index.indexer import Indexer
-from src.models.schemas import AnswerEnvelope, Chunk
+from src.models.schemas import AnswerEnvelope, Chunk, Citation
 from src.query.hybrid_retriever import HybridRetriever
 from src.query.reranker import rerank
 from src.query.transform import transform_query
@@ -81,12 +85,43 @@ def answer_question(query: str, indexer: Indexer | None = None) -> AnswerEnvelop
 
     return AnswerEnvelope(
         answer=answer,
+        citations=_citations(answer, context),
         faithfulness_score=grounding.score if grounding else None,
+        grounding_method=grounding.method if grounding else None,
         confidence=grounding.confidence if grounding else None,
         used_query_transform=transformed.mode,
         retrieved_k=retrieved_k,
         final_k=len(context),
     )
+
+
+def _citations(answer: str, context: list[Chunk]) -> list[Citation]:
+    """Turn the context into the citation list shown under the answer.
+
+    Numbering is the whole point of doing this here. `generate_answer` presents
+    the excerpts to the model numbered from 1 in the order of the list it is
+    given, and that list is `context` — so building citations from the same
+    list in the same order is what makes a `[2]` in the answer and the citation
+    numbered 2 the same passage. Any other source for this list, or any
+    reordering, silently mislabels every citation.
+
+    Every excerpt the model was shown is listed, not only the ones it referred
+    to. What retrieval put in front of the model is worth seeing — it is how a
+    reader tells "the documents do not say" from "the right passage was never
+    retrieved" — while `cited` marks the ones the answer actually drew on.
+    """
+    used = cited_markers(answer)
+    return [
+        Citation(
+            source_file=chunk.source_file,
+            snippet=chunk.chunk_text,
+            marker=marker,
+            page=chunk.page_number,
+            section=chunk.section_header,
+            cited=marker in used,
+        )
+        for marker, chunk in enumerate(context, start=1)
+    ]
 
 
 def _check(answer: str, context: list[Chunk]) -> Grounding | None:

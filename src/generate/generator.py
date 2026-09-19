@@ -50,11 +50,28 @@ _SYSTEM_PROMPT = f"""You are a knowledge assistant. You answer questions using O
 # makes this safe on a corpus that legitimately contains CJK text: 【1, 3】 is
 # a citation and is rewritten, 【重要】 is content and is left alone.
 _NON_ASCII_CITATION = re.compile(r"[【〔［]\s*([\d\s,]+?)\s*[】〕］]")
+# The same marker once normalized, for reading back which excerpts were used.
+_ASCII_CITATION = re.compile(r"\[\s*([\d\s,]+?)\s*\]")
+_NUMBER = re.compile(r"\d+")
 
 
 def normalize_citation_markers(text: str) -> str:
     """Rewrite non-ASCII citation brackets as plain square brackets."""
     return _NON_ASCII_CITATION.sub(lambda m: f"[{' '.join(m.group(1).split())}]", text)
+
+
+def cited_markers(answer: str) -> set[int]:
+    """The excerpt numbers an answer refers to, from its [1] / [2, 3] markers.
+
+    Reads back what `_format_context` wrote. This is only reliable because
+    `normalize_citation_markers` has already run over the answer: the model
+    emits full-width brackets often enough that parsing the raw reply would
+    miss most citations on some questions entirely.
+    """
+    markers: set[int] = set()
+    for group in _ASCII_CITATION.findall(answer):
+        markers.update(int(number) for number in _NUMBER.findall(group))
+    return markers
 
 
 class GenerationError(RuntimeError):

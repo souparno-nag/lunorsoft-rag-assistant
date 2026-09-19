@@ -171,7 +171,7 @@ confident. Directly satisfies core requirement #8.
 
 | ID | Status | Task | Deps | Prio | Eff | Files |
 | --- | --- | --- | --- | --- | --- | --- |
-| T8.1 | ☐ | Populate `citations[]` (source_file · page · section · snippet) from the chunks used | T5.3 | MUST | S | `src/query/pipeline.py` |
+| T8.1 | ☑ | Populate `citations[]` (source_file · page · section · snippet) from the chunks used | T5.3 | MUST | S | `src/query/pipeline.py` |
 | T8.2 | ☐ | UI: citations expander under each answer showing the exact supporting snippets | T8.1, T2.3 | MUST | S | `app.py` |
 | T8.3 | ☐ | UI: confidence badge rendered from `confidence` band | T7.4, T2.3 | MUST | S | `app.py` |
 

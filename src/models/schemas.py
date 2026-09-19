@@ -62,10 +62,22 @@ class RetrievalResult:
 
 @dataclass
 class Citation:
+    """One source excerpt that was placed in the answer's context.
+
+    `marker` is the bracket number the excerpt was presented to the model
+    under, so a `[2]` in the answer text and the citation numbered 2 refer to
+    the same passage. `cited` records whether the answer actually referred to
+    it: every excerpt the model was shown is listed, because what retrieval
+    put in front of it is worth seeing, but the ones it drew on are the ones
+    that support the claims.
+    """
+
     source_file: str
     snippet: str
+    marker: int
     page: int | None = None
     section: str | None = None
+    cited: bool = False
 
 
 @dataclass
@@ -74,6 +86,10 @@ class AnswerEnvelope:
     citations: list[Citation] = field(default_factory=list)
     faithfulness_score: float | None = None
     confidence: Confidence | None = None
+    # How the faithfulness score was arrived at — "judge" or "overlap". The
+    # two are not equally trustworthy (see src/generate/grounding.py), so the
+    # UI has to be able to say which one it is showing.
+    grounding_method: str | None = None
     used_query_transform: str | None = None
     retrieved_k: int = 0
     final_k: int = 0
