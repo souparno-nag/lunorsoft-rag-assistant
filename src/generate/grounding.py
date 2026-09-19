@@ -6,10 +6,13 @@ a request, and core requirement #8 — that answers are based on the provided
 knowledge source — is not satisfied by having asked politely.
 
 An answer is scored by having a second model read the excerpts and the answer
-together and rule on each claim the answer makes.
+together and rule on each claim the answer makes. When that model cannot be
+reached, a much cruder token-overlap heuristic stands in, so an answer is never
+served with no grounding signal at all.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -36,6 +39,22 @@ SUPPORTED: <the claim in a few words>
 UNSUPPORTED: <the claim in a few words>"""
 
 
+# Citation markers are not claims, and their numbers would otherwise count as
+# content words that the context happens not to contain.
+_CITATION_MARKER = re.compile(r"\[\d+(?:\s*,\s*\d+)*\]")
+
+# Enough function words to stop "the", "of" and "is" from inflating an overlap
+# score towards 1 for any answer whatsoever. Deliberately short: the heuristic
+# is a floor, and a longer list would imply a precision it does not have.
+_FUNCTION_WORDS = frozenset(
+    """a an and are as at be been but by for from had has have in into is it its
+    of on or that the this to was were which with not no than then they their
+    these those there here when where who whom how what why can could may might
+    must shall should will would do does did done using used use also such each
+    any all both more most other some only own same so too very s t don now""".split()
+)
+
+
 class GroundingUnavailable(RuntimeError):
     """Raised when the judge cannot be reached or returned nothing usable."""
 
@@ -57,6 +76,22 @@ class Grounding:
     def supported(self) -> bool:
         """Whether the answer clears the configured grounding threshold."""
         return self.score >= settings.GROUNDING_THRESHOLD
+
+
+def check_grounding(
+    answer: str, chunks: list[Chunk], *, llm: BaseChatModel | None = None
+) -> Grounding:
+    """Score an answer, preferring the judge and falling back to overlap.
+
+    The fallback exists because the judge is an LLM call on a shared free-tier
+    budget — Phase 6 hit that limit for real — and an answer served with no
+    grounding signal at all would quietly defeat the purpose of having one.
+    """
+    try:
+        return judge(answer, chunks, llm=llm)
+    except GroundingUnavailable as exc:
+        logger.warning("Grounding judge unavailable (%s); falling back to overlap", exc)
+        return overlap(answer, chunks)
 
 
 def judge(
@@ -112,6 +147,60 @@ def judge(
         supported_claims=supported,
         unsupported_claims=unsupported,
     )
+
+
+def overlap(answer: str, chunks: list[Chunk]) -> Grounding:
+    """Score an answer by how much of its vocabulary appears in the context.
+
+    The cheap fallback: no model, no network, no tokens. It asks a much weaker
+    question than the judge does — *are the words of this answer drawn from
+    the sources* rather than *are its claims supported by them* — and the gap
+    between those two questions is where its limits live.
+
+    What it catches reliably is the failure that matters most: an answer that
+    has wandered off the documents entirely, into the model's own knowledge,
+    brings vocabulary with it that the context does not contain.
+
+    What it cannot catch is a false claim assembled entirely from words that
+    are present. "Label smoothing of 0.3" scores no worse than "0.1" when both
+    numbers appear somewhere in the excerpts, and a claim with its subject and
+    object swapped scores perfectly. It is a floor, not a substitute, and
+    `method` records which of the two produced a score so that nothing
+    downstream treats them as interchangeable.
+    """
+    from src.index.keyword_index import tokenize
+
+    answer_words = _content_words(answer)
+    if not answer_words:
+        # Nothing assertive to check — a refusal, or a one-word reply. There is
+        # no evidence either way, and inventing a low score would be a worse
+        # answer than admitting the measure does not apply.
+        return Grounding(score=1.0, method="overlap")
+
+    context_words = set()
+    for chunk in chunks:
+        context_words.update(tokenize(chunk.chunk_text))
+
+    grounded = answer_words & context_words
+    score = len(grounded) / len(answer_words)
+    logger.info(
+        "Grounding overlap: %d/%d content word(s) found in the context (score %.2f)",
+        len(grounded),
+        len(answer_words),
+        score,
+    )
+    return Grounding(score=score, method="overlap")
+
+
+def _content_words(text: str) -> set[str]:
+    """The words of `text` that carry meaning, for overlap purposes."""
+    from src.index.keyword_index import tokenize
+
+    return {
+        word
+        for word in tokenize(_CITATION_MARKER.sub(" ", text))
+        if word not in _FUNCTION_WORDS
+    }
 
 
 def _count_verdicts(text: str) -> tuple[int, int]:
