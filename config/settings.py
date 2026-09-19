@@ -177,6 +177,9 @@ MULTI_QUERY_COUNT = 3
 MAX_CONTEXT_TOKENS = 6000
 
 # Grounding
+# The judge answers one line per claim, so its budget scales with how many
+# claims an answer makes; reasoning tokens count against it too.
+JUDGE_MAX_TOKENS = 512
 GROUNDING_THRESHOLD = 0.50
 CONFIDENCE_HIGH_CUTOFF = 0.75
 CONFIDENCE_MEDIUM_CUTOFF = 0.50
