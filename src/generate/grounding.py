@@ -19,7 +19,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import settings
-from src.models.schemas import Chunk
+from src.models.schemas import Chunk, Confidence
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,15 @@ _FUNCTION_WORDS = frozenset(
 )
 
 
+# Replaces an answer the judge found largely unsupported. Phrased as the
+# system's own failure to find support rather than as a claim about the
+# documents, because "not supported by the retrieved excerpts" and "not in the
+# documents" are different statements and only the first one is known.
+LOW_SUPPORT_MESSAGE = (
+    "I couldn't find enough support in the documents for a confident answer."
+)
+
+
 class GroundingUnavailable(RuntimeError):
     """Raised when the judge cannot be reached or returned nothing usable."""
 
@@ -76,6 +85,35 @@ class Grounding:
     def supported(self) -> bool:
         """Whether the answer clears the configured grounding threshold."""
         return self.score >= settings.GROUNDING_THRESHOLD
+
+    @property
+    def confidence(self) -> Confidence:
+        """The band shown to the user, from the configured cutoffs.
+
+        An overlap score can never earn the top band. The measure is not
+        capable of justifying it: T7.2 measured it awarding a perfect 1.00 to
+        an answer whose one factual claim was wrong, because the wrong value's
+        digits appeared elsewhere in the excerpts. A badge is a statement to a
+        user about how far the answer was checked, and "high" would overstate
+        what a word-overlap count establishes.
+        """
+        band = confidence_for(self.score)
+        if self.method != "judge" and band == "high":
+            return "medium"
+        return band
+
+    @property
+    def should_downgrade(self) -> bool:
+        """Whether the answer should be replaced by LOW_SUPPORT_MESSAGE.
+
+        Only a judge verdict can trigger this. Withdrawing an answer is a
+        destructive act — the user loses a reply that may well have been
+        correct — and the overlap heuristic is too blunt to justify it: it
+        scores on vocabulary, so a correct answer phrased in the asker's words
+        rather than the document's can score low without being wrong. A weak
+        overlap score lowers the badge and says so; it does not censor.
+        """
+        return self.method == "judge" and not self.supported
 
 
 def check_grounding(
@@ -218,3 +256,12 @@ def _count_verdicts(text: str) -> tuple[int, int]:
         elif stripped.startswith("SUPPORTED"):
             supported += 1
     return supported, unsupported
+
+
+def confidence_for(score: float) -> Confidence:
+    """Map a faithfulness score onto a confidence band (specs/design.md §5.6)."""
+    if score >= settings.CONFIDENCE_HIGH_CUTOFF:
+        return "high"
+    if score >= settings.CONFIDENCE_MEDIUM_CUTOFF:
+        return "medium"
+    return "low"
