@@ -144,7 +144,7 @@ verify precision improves on a query where raw fusion returned noisy hits.
 | --- | --- | --- | --- | --- | --- | --- |
 | T6.1 | ☑ | Query rewrite (Groq LLM normalizes/clarifies the raw query) | T2.1 | MUST | S | `src/query/transform.py` |
 | T6.2 | ☑ | Multi-query: generate 2–3 paraphrases; retrieve per paraphrase; pool + de-duplicate by `chunk_id` | T6.1, T4.3 | MUST | M | `src/query/transform.py` |
-| T6.3 | ☐ | HyDE (optional): embed a hypothetical answer for dense search; toggle via config | T6.1 | STRETCH | M | `src/query/transform.py` |
+| T6.3 | ☑ | HyDE (optional): embed a hypothetical answer for dense search; toggle via config | T6.1 | STRETCH | M | `src/query/transform.py` |
 | T6.4 | ☐ | Wire transform stage at the front of `pipeline.py`; record `used_query_transform` in the envelope | T6.2, T4.4 | MUST | S | `src/query/pipeline.py` |
 
 **Definition of done (Phase 6):** a vague question retrieves better with

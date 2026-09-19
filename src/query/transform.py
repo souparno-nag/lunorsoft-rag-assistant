@@ -35,7 +35,9 @@ _LIST_MARKER = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
 # on. An error code, a header name or an identifier is the most valuable thing
 # in the query, and a model asked to clarify will happily turn `Max-Forwards`
 # into "the maximum forwards header" — which is more readable and retrieves
-# worse. Both prompts below say so explicitly.
+# worse. The rewrite and multi-query prompts both say so explicitly. HyDE does
+# not use this, and should not: it writes a passage rather than a query, and
+# pinning its vocabulary would defeat the point of writing one.
 _PRESERVE = (
     "Preserve every specific term exactly as written — names, identifiers, "
     "error codes, header names, numbers, acronyms and any word in code or "
@@ -49,6 +51,10 @@ _MULTI_QUERY_PROMPT = f"""You generate alternative phrasings of a user's questio
 Beyond those fixed terms, vary the wording as much as you can: use synonyms, and use the technical vocabulary a document on this subject would be likely to use, even when the asker did not. A phrasing that reaches for the document's own words is the most useful one you can write.
 
 Write one phrasing per line. Do not number them, do not answer the question, and write nothing else."""
+
+_HYDE_PROMPT = """Write a short passage that answers the user's question the way a technical reference document would.
+
+Write two or three sentences of plain declarative prose, in the register of a specification or a research paper. State it directly. Do not hedge, do not say you are uncertain, do not mention that you are guessing, and do not address the reader. Write the passage alone and nothing else."""
 
 _REWRITE_PROMPT = f"""You rewrite a user's question into a single clear, self-contained search query for a document retrieval system.
 
@@ -105,6 +111,8 @@ def transform_query(
         return _rewrite(query, llm)
     if mode == "multi_query":
         return _multi_query(query, llm)
+    if mode == "hyde":
+        return _hyde(query, llm)
 
     logger.warning(
         "Unknown QUERY_TRANSFORM_MODE %r; retrieving with the original query", mode
@@ -156,6 +164,40 @@ def _multi_query(query: str, llm: BaseChatModel | None) -> TransformedQuery:
     )
 
 
+def _hyde(query: str, llm: BaseChatModel | None) -> TransformedQuery:
+    """Search the vector store with a hypothetical answer instead of the question.
+
+    A question and its answer are different kinds of text, and an embedding
+    model knows it: "What is the maximum path length for self-attention?" and
+    "The maximum path length between any two positions is O(1)" do not sit as
+    close together as two passages of prose about path length would. HyDE
+    exploits that by writing the passage the answer would be, and searching
+    with it — comparing a document-shaped probe against documents.
+
+    **The passage may be factually wrong, and that is acceptable.** It is never
+    shown to anyone, never enters the generation context, and contributes no
+    words to the answer. It is used once, to produce an embedding, and then
+    discarded. What it has to get right is register and vocabulary — sounding
+    like the document — not fact.
+
+    Only the dense side uses it. BM25 keeps the literal question, because
+    matching invented prose term-for-term would retrieve on words the model
+    made up, which is the one way a wrong hypothetical could do real damage.
+    """
+    lines = _ask(_HYDE_PROMPT, query, llm)
+    if not lines:
+        return TransformedQuery.untransformed(query)
+
+    passage = " ".join(lines)
+    logger.info("HyDE passage for %r: %r", query, passage)
+    return TransformedQuery(
+        original=query,
+        mode="hyde",
+        dense_queries=[passage],
+        sparse_queries=[query],
+    )
+
+
 def _ask(system_prompt: str, query: str, llm: BaseChatModel | None) -> list[str]:
     """Run one transformation call and return its non-empty lines.
 
@@ -167,7 +209,9 @@ def _ask(system_prompt: str, query: str, llm: BaseChatModel | None) -> list[str]
     from src.generate.generator import get_llm
 
     try:
-        llm = llm or get_llm()
+        llm = llm or get_llm(
+            settings.GROQ_TRANSFORM_MODEL, settings.TRANSFORM_MAX_TOKENS
+        )
         response = llm.invoke(
             [SystemMessage(content=system_prompt), HumanMessage(content=query)]
         )
