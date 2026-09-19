@@ -197,7 +197,7 @@ multi-document corpus with file-attributed citations.
 | ID | Status | Task | Deps | Prio | Eff | Files |
 | --- | --- | --- | --- | --- | --- | --- |
 | T10.1 | ☑ | Rolling message history in Streamlit session state | T2.3 | STRETCH | S | `app.py` |
-| T10.2 | ☐ | History-aware query rewrite: condense follow-up + prior turns into a standalone question before retrieval (retrieval still grounds on docs) | T10.1, T6.1 | STRETCH | M | `src/query/transform.py` |
+| T10.2 | ☑ | History-aware query rewrite: condense follow-up + prior turns into a standalone question before retrieval (retrieval still grounds on docs) | T10.1, T6.1 | STRETCH | M | `src/query/transform.py` |
 
 **Definition of done (Phase 10):** follow-up questions resolve correctly without
 losing grounding/faithfulness.

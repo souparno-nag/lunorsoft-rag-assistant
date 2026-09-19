@@ -280,6 +280,8 @@ def render_pipeline_caption(envelope: AnswerEnvelope) -> None:
     difference a stage makes rather than assert it.
     """
     parts = [f"Query transform: {envelope.used_query_transform or 'none'}"]
+    if envelope.standalone_question:
+        parts.append(f"read as “{envelope.standalone_question}”")
     parts.append(f"retrieved {envelope.retrieved_k} chunk(s)")
     parts.append(f"used {envelope.final_k} in the answer's context")
     st.caption(" · ".join(parts))
@@ -324,7 +326,7 @@ def render_chat(indexer: Indexer) -> None:
         st.markdown(question)
     with st.spinner("Thinking…"):
         try:
-            envelope = answer_question(question, indexer=indexer)
+            envelope = answer_question(question, indexer=indexer, history=history)
         except (ValueError, RuntimeError) as exc:
             st.error(f"Could not answer that question: {exc}")
             return

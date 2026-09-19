@@ -24,6 +24,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import settings
+from src.models.schemas import Turn
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,18 @@ _MULTI_QUERY_PROMPT = f"""You generate alternative phrasings of a user's questio
 Beyond those fixed terms, vary the wording as much as you can: use synonyms, and use the technical vocabulary a document on this subject would be likely to use, even when the asker did not. A phrasing that reaches for the document's own words is the most useful one you can write.
 
 Write one phrasing per line. Do not number them, do not answer the question, and write nothing else."""
+
+_CONDENSE_PROMPT = """You rewrite a follow-up question into one that stands on its own.
+
+The conversation so far is given for reference. Use it only to resolve what the new question refers to: pronouns such as "it" or "they", and phrases such as "that one" or "the second approach".
+
+Rules:
+- Replace each reference with the words it stands for, taking those words from the conversation.
+- Change nothing else. Keep the asker's own terms, and keep every identifier, code, name, header and number exactly as written.
+- Do not answer the question. Do not add facts from the conversation that the question did not ask about.
+- If the question already stands on its own, repeat it back unchanged.
+
+Reply with the standalone question alone, on one line, with no preamble or quotes."""
 
 _HYDE_PROMPT = """Write a short passage that answers the user's question the way a technical reference document would.
 
@@ -232,3 +245,95 @@ def _clean_lines(text: str) -> list[str]:
         if line:
             lines.append(line)
     return lines
+
+
+# --- History-aware rewriting (T10.2) ----------------------------------------
+
+# Words that point at something said earlier rather than naming it. A question
+# containing one of these cannot be retrieved on as written, because the thing
+# it is actually asking about is not in it.
+_REFERRING_WORDS = frozenset(
+    """it its they them their that those this these he him his she her one ones
+    there both former latter same other another""".split()
+)
+# A question opening on a conjunction is continuing the previous one.
+_CONTINUATIONS = ("and", "but", "or", "so", "then", "also", "plus")
+# Below this, a question is too short to carry its own subject: "why?",
+# "how many?", "what about NIST?".
+_SHORT_QUESTION_WORDS = 4
+# Past answers are quoted to the rewriter only far enough to resolve a
+# reference. The whole answer would be prompt tokens spent on text the rewrite
+# does not read.
+_ANSWER_EXCERPT_CHARS = 300
+
+
+def condense_question(
+    query: str, history: list[Turn], *, llm: BaseChatModel | None = None
+) -> str:
+    """Rewrite a follow-up into a question that stands on its own.
+
+    "And how many heads does it use?" retrieves nothing useful, because the
+    subject it is asking about — the base Transformer model — is in the
+    previous turn rather than in the question. Resolving the reference before
+    retrieval is what lets the rest of the pipeline stay exactly as it is: the
+    condensed question goes through transformation, retrieval, re-ranking and
+    generation as any other question would.
+
+    **The conversation never becomes context for the answer.** It is read here,
+    to work out what was asked, and goes no further: `generate_answer` is given
+    retrieved chunks and nothing else, so an answer still has to be supported
+    by the documents, and the faithfulness judge still scores it against them.
+    Resolving "it" into "the base Transformer model" changes what the question
+    means, not where the answer may come from (specs/design.md §12.3).
+
+    Returns the query unchanged when there is no history, when the question
+    plainly stands on its own, or when the rewrite fails.
+    """
+    query = query.strip()
+    if not history or not needs_condensing(query):
+        return query
+
+    lines = _ask(_CONDENSE_PROMPT, _conversation(query, history), llm)
+    if not lines:
+        return query
+
+    standalone = lines[0]
+    if standalone != query:
+        logger.info("Condensed %r -> %r", query, standalone)
+    return standalone
+
+
+def needs_condensing(query: str) -> bool:
+    """Whether a question looks like it depends on what came before.
+
+    A cheap filter in front of an LLM call, not a judgement about grammar.
+    Most questions are self-contained, and Phase 6 established that the Groq
+    free tier's token budget is a real constraint rather than a theoretical
+    one — so the call is worth skipping whenever nothing suggests a reference
+    to resolve.
+
+    It errs towards condensing. A needless rewrite costs one small call and
+    usually returns the question unchanged, whereas a missed one retrieves for
+    a question whose subject is absent and answers the wrong thing.
+    """
+    words = [word.strip(".,!?;:").lower() for word in query.split()]
+    if not words:
+        return False
+    if words[0] in _CONTINUATIONS:
+        return True
+    if len(words) <= _SHORT_QUESTION_WORDS:
+        return True
+    return any(word in _REFERRING_WORDS for word in words)
+
+
+def _conversation(query: str, history: list[Turn]) -> str:
+    """Render the recent turns and the new question for the rewriter."""
+    recent = history[-settings.HISTORY_TURNS :]
+    lines = []
+    for turn in recent:
+        answer = " ".join(turn.envelope.answer.split())
+        if len(answer) > _ANSWER_EXCERPT_CHARS:
+            answer = answer[:_ANSWER_EXCERPT_CHARS].rstrip() + "…"
+        lines.append(f"Q: {turn.question}\nA: {answer}")
+    lines.append(f"Follow-up question: {query}")
+    return "\n\n".join(lines)

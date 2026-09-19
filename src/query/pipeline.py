@@ -32,16 +32,23 @@ from src.generate.grounding import (
     check_grounding,
 )
 from src.index.indexer import Indexer
-from src.models.schemas import AnswerEnvelope, Chunk, Citation
+from src.models.schemas import AnswerEnvelope, Chunk, Citation, Turn
 from src.query.hybrid_retriever import HybridRetriever
 from src.query.reranker import rerank
-from src.query.transform import transform_query
+from src.query.transform import condense_question, transform_query
 
 logger = logging.getLogger(__name__)
 
 
-def answer_question(query: str, indexer: Indexer | None = None) -> AnswerEnvelope:
+def answer_question(
+    query: str,
+    indexer: Indexer | None = None,
+    history: list[Turn] | None = None,
+) -> AnswerEnvelope:
     """Answer `query` against the indexed documents, grounded in retrieved chunks.
+
+    `history` is the conversation so far, used only to resolve what a
+    follow-up refers to before retrieval runs.
 
     `indexer` is injectable for testing; by default one is opened with the
     configured embedding provider. An empty or unindexed corpus is not an error
@@ -57,7 +64,14 @@ def answer_question(query: str, indexer: Indexer | None = None) -> AnswerEnvelop
     indexer = indexer or Indexer()
     retriever = HybridRetriever(indexer.vectors, indexer.keywords)
 
-    transformed = transform_query(query)
+    # A follow-up is resolved into a standalone question first, and everything
+    # downstream then works from that: it is what the user asked, merely said
+    # in full. The conversation itself goes no further than this line — the
+    # context handed to the generator is retrieved chunks and nothing else, so
+    # answers stay grounded in the documents (specs/design.md §12.3).
+    standalone = condense_question(query, history or [])
+
+    transformed = transform_query(standalone)
     results = retriever.retrieve_pooled(
         transformed.dense_queries,
         transformed.sparse_queries,
@@ -65,11 +79,11 @@ def answer_question(query: str, indexer: Indexer | None = None) -> AnswerEnvelop
     )
     retrieved_k = len(results)
 
-    selected = rerank(query, results, k=settings.K_FINAL)
+    selected = rerank(standalone, results, k=settings.K_FINAL)
     context = _assemble_context(
         [result.chunk for result in selected], settings.MAX_CONTEXT_TOKENS
     )
-    answer = generate_answer(query, context)
+    answer = generate_answer(standalone, context)
     grounding = _check(answer, context)
 
     if grounding and grounding.should_downgrade:
@@ -90,6 +104,7 @@ def answer_question(query: str, indexer: Indexer | None = None) -> AnswerEnvelop
         grounding_method=grounding.method if grounding else None,
         confidence=grounding.confidence if grounding else None,
         used_query_transform=transformed.mode,
+        standalone_question=standalone if standalone != query else None,
         retrieved_k=retrieved_k,
         final_k=len(context),
     )

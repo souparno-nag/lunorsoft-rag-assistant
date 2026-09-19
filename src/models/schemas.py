@@ -111,5 +111,10 @@ class AnswerEnvelope:
     # UI has to be able to say which one it is showing.
     grounding_method: str | None = None
     used_query_transform: str | None = None
+    # The follow-up as the pipeline understood it, set only when conversation
+    # history actually changed the question. Shown to the user, because a
+    # question silently answered as a different question is the one thing a
+    # conversational assistant must not do quietly.
+    standalone_question: str | None = None
     retrieved_k: int = 0
     final_k: int = 0
