@@ -306,3 +306,66 @@ Note that this applies to the embedding provider specifically. Answer
 generation always calls Groq, so the *question* and the *retrieved excerpts*
 are sent there on every query, including locally. Only the embedding step is
 avoidable by switching provider.
+
+---
+
+## Limitations and future work
+
+Known limits, measured where possible rather than guessed at.
+
+**Heading detection misses unnumbered headings.** Sections are found from the
+shape of the text — numbering, length, capitalisation — never from font size,
+because font metrics are unavailable on the pypdf fallback path and meaningless
+for Markdown. A heading that announces itself only by indentation or typeface
+(an RFC's "Abstract") is invisible. Such a document degrades to one unheaded
+section, which the semantic splitter and BM25 both still handle. On RFC 2616
+this misses a handful of front-matter headings while finding all 194 numbered
+sections.
+
+**Scanned PDFs are not supported.** There is no OCR. A PDF with no text layer
+is reported and skipped.
+
+**The overlap heuristic cannot catch a recombined falsehood.** When the
+grounding judge is unavailable, scoring falls back to token overlap, which asks
+whether the answer's words came from the sources — not whether its claims did.
+An answer saying "label smoothing of 0.3" scores a perfect 1.00 when the digits
+appear somewhere in the excerpts. This is why an overlap score is capped at
+medium confidence and can never withdraw an answer.
+
+**Multi-query amplifies a misreading.** Given a genuinely ambiguous question,
+the paraphrases commit to one interpretation, and if it is the wrong one they
+commit harder. *"Whats that code for when you gotta pay"* produced fluent
+paraphrases about payment codes rather than HTTP status codes, because the
+transformer has no more knowledge of the corpus than the asker.
+
+**Free-tier rate limits are real.** Groq's free tier allows 8,000 tokens per
+minute, shared between generation, query transformation and the grounding
+judge. Sustained use hits it. Auxiliary calls run on the smaller model with
+tight token caps to reduce pressure, but heavy use will still be throttled.
+
+**The deployment sleeps and is memory-constrained.** The free tier idles the
+container; a cold start is around 25 seconds. The full stack measures 654 MiB
+resident against roughly a 1 GB ceiling, which fits but is not generous. If it
+ever exceeds it, setting `RERANKING = False` removes the cross-encoder and the
+pipeline degrades cleanly to fused-retrieval order.
+
+**No formal evaluation harness.** The comparisons in
+[Results](#results-measured-not-asserted) are purpose-built scripts over
+hand-built ground truth — terms that occur in exactly one chunk, so the correct
+answer is unambiguous — not a standard framework. [`specs/tasks.md`](specs/tasks.md)
+Phase 12 sketches a RAGAS harness measuring faithfulness, answer relevance and
+context precision/recall over a curated Q/A set. That is the most valuable
+thing to build next: the present numbers are honest but small, and several
+differences are near the edge of what a set of this size can resolve.
+
+Other things worth doing, roughly in order of value:
+
+- **Per-document filtering at query time**, so a question can be scoped to one
+  file in a large corpus.
+- **Answer streaming**, so the model's reply appears as it is produced rather
+  than after the grounding check completes.
+- **A remote re-ranker** (Cohere Rerank), which would remove torch from the
+  deployment entirely — the stack drops from 654 MiB to about 140 MiB — at the
+  cost of a third API dependency.
+- **Chunk-level caching of embeddings across re-indexes**, so re-uploading a
+  document that has not changed costs nothing.
