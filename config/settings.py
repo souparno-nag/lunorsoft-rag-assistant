@@ -8,6 +8,32 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _setting(name: str, default: str = "") -> str:
+    """Read a secret or tunable from the environment, then from Streamlit.
+
+    Locally these come from `.env`. On Streamlit Community Cloud they are
+    entered in the platform's secrets editor, which also publishes them as
+    environment variables — so `os.getenv` alone is usually enough. The
+    `st.secrets` fallback is there because "usually" is doing real work in that
+    sentence, and the failure it prevents is an app that deploys, starts, and
+    then reports a missing API key on the first question.
+
+    Streamlit is imported lazily and defensively: `config` is also imported by
+    plain scripts with no Streamlit runtime, and reading `st.secrets` without
+    a secrets file raises rather than returning empty.
+    """
+    value = os.getenv(name)
+    if value:
+        return value
+
+    try:
+        import streamlit as st
+
+        return str(st.secrets[name])
+    except Exception:
+        return default
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 STORAGE_DIR = PROJECT_ROOT / "storage"
@@ -26,15 +52,20 @@ INDEX_META_PATH = STORAGE_DIR / "index_meta.json"
 CHUNKS_PATH = STORAGE_DIR / "chunks.jsonl"
 
 # Secrets
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GROQ_API_KEY = _setting("GROQ_API_KEY")
+GEMINI_API_KEY = _setting("GEMINI_API_KEY")
 
 # Providers
 # Switching provider changes the vector dimensionality, so the index must be
 # rebuilt from scratch after a change — Chroma cannot mix dimensions.
 EmbeddingProvider = Literal["gemini", "local"]
 
-_provider = os.getenv("EMBEDDING_PROVIDER", "local")
+# Local by default: no API quota, no network, and the machine running a demo
+# has the memory for MiniLM. The deployed build sets this to "gemini" instead
+# — embedding on Google's servers costs the container almost nothing, which is
+# what leaves room under the ~1 GB tier for the local cross-encoder reranker
+# (specs/design.md §8.1). The reranker stays local either way.
+_provider = _setting("EMBEDDING_PROVIDER", "local")
 if _provider not in ("gemini", "local"):
     raise ValueError(
         f"EMBEDDING_PROVIDER must be 'gemini' or 'local', got {_provider!r}"
