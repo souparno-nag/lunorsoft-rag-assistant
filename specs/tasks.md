@@ -211,7 +211,7 @@ losing grounding/faithfulness.
 | T11.1 | ☐ | Deploy to **Streamlit Community Cloud** (HF Spaces = fallback). **Not Netlify** — it can't host a Python/Streamlit server (`design.md §12.4`) | T2.5 | STRETCH | M | repo |
 | T11.2 | ☑ | Set embedding provider = **Gemini** for deploy (remote, memory-safe on ~1 GB tier); keep reranker local | T11.1, T1.5 | STRETCH | S | `config/settings.py` |
 | T11.3 | ☐ | Configure secrets (`GROQ_API_KEY`, `GEMINI_API_KEY`) via platform secret store; never commit keys | T11.1 | STRETCH | S | platform |
-| T11.4 | ☐ | Handle cold-start storage: ship a small prebuilt sample index or rebuild on start | T11.1 | STRETCH | M | repo |
+| T11.4 | ☑ | Handle cold-start storage: ship a small prebuilt sample index or rebuild on start | T11.1 | STRETCH | M | repo |
 | T11.5 | ☐ | Test the live link in an incognito window (brief requirement) | T11.1 | STRETCH | S | — |
 
 **Definition of done (Phase 11):** public link loads and answers in a clean

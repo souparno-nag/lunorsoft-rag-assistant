@@ -218,6 +218,14 @@ QUERY_TRANSFORM_MODE: QueryTransformMode = "multi_query"
 # is always retrieved for as well, so 3 here means four rankings per retriever.
 MULTI_QUERY_COUNT = 3
 
+# Cold start. storage/ is not committed — the Chroma database is a binary that
+# does not diff, and an index is derived from documents that are committed
+# anyway — so a freshly deployed container starts with nothing indexed. When
+# this is on, whatever sits in data/ is indexed on first use, so someone
+# opening the public link lands on a working assistant rather than an upload
+# prompt. Set to 0 to start empty.
+BOOTSTRAP_SAMPLE_DOCUMENTS = _setting("BOOTSTRAP_SAMPLE_DOCUMENTS", "1") != "0"
+
 # Conversation history
 # How many past turns are shown to the history-aware rewrite. The transcript
 # itself is not truncated — a reader should see their whole conversation — but

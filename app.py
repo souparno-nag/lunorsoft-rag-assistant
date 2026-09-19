@@ -11,10 +11,11 @@ document becomes two index entries.
 
 import streamlit as st
 
-from src.models.schemas import AnswerEnvelope, Citation, Turn
+from config import settings
 from src.index.indexer import Indexer
 from src.index.vector_store import IndexProviderMismatch
-from src.ingest.loader import load_bytes
+from src.ingest.loader import SUPPORTED_SUFFIXES, load_bytes, load_documents
+from src.models.schemas import AnswerEnvelope, Citation, Turn
 from src.query.pipeline import answer_question
 
 st.set_page_config(page_title="Lunorsoft RAG Assistant", page_icon="📚")
@@ -42,6 +43,50 @@ def get_indexer() -> Indexer:
     would reload all of that.
     """
     return Indexer()
+
+
+def bootstrap_sample_documents(indexer: Indexer) -> None:
+    """Index whatever is in data/ the first time a session finds nothing indexed.
+
+    storage/ is not committed, so a freshly deployed container has an empty
+    index while data/ still holds the sample corpus. Without this, the public
+    link opens on "no documents indexed yet" and a reviewer has to find a PDF
+    before the app does anything — which is a poor showing for the one link
+    that gets looked at.
+
+    Guarded per session rather than per index, so clearing the index does not
+    have it immediately repopulate underneath the user. A later session on the
+    same container will bootstrap again, which is what makes a restarted
+    deployment come back up working.
+    """
+    if st.session_state.get("bootstrap_done") or not settings.BOOTSTRAP_SAMPLE_DOCUMENTS:
+        return
+    st.session_state["bootstrap_done"] = True
+
+    if indexer.count():
+        return
+    paths = sorted(
+        path
+        for path in settings.DATA_DIR.glob("*")
+        if path.suffix.lower() in SUPPORTED_SUFFIXES
+    )
+    if not paths:
+        return
+
+    with st.spinner(f"Preparing {len(paths)} sample document(s)…"):
+        documents, failures = load_documents(paths)
+        if documents:
+            indexer.add_documents(documents)
+    for name, reason in failures:
+        st.warning(f"Could not load the sample document {name}: {reason}")
+    if documents:
+        st.info(
+            "Loaded the sample document"
+            + ("s" if len(documents) > 1 else "")
+            + ": "
+            + ", ".join(document.source_file for document in documents)
+            + ". Upload your own above, or ask a question below."
+        )
 
 
 def ingest_uploaded_file(uploaded_file, indexer: Indexer) -> tuple[int, str]:
@@ -351,6 +396,7 @@ def main() -> None:
         st.error(str(exc))
         st.stop()
 
+    bootstrap_sample_documents(indexer)
     render_upload(indexer)
     st.divider()
     render_chat(indexer)
