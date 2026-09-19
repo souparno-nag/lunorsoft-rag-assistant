@@ -157,10 +157,12 @@ the app detects the mismatch and says so rather than failing mid-query.
 ## Results, measured not asserted
 
 Every differentiator was measured against the pipeline without it. The corpus
-for the retrieval numbers is 672 chunks from four structurally different
-documents: *Attention Is All You Need*, the RAG paper, NIST SP 800-63-3 (76
-pages, with a table of contents and front matter) and RFC 2616 (8,989 lines of
-paginated plain text).
+throughout is the same four structurally different documents: *Attention Is All
+You Need*, the RAG paper, NIST SP 800-63-3 (76 pages, with a table of contents
+and front matter) and RFC 2616 (8,989 lines of paginated plain text). It comes
+to roughly 670–690 chunks; the exact count moved a little between measurements
+as chunking improved during development, so each figure below is from the
+corpus as it stood when that comparison was run.
 
 ### The headline example — hybrid search
 
