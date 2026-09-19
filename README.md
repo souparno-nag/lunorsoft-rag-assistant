@@ -151,3 +151,98 @@ Behaviour is tuned in [`config/settings.py`](config/settings.py) — chunk bound
 `k` values, fusion method, query-transform mode, confidence cutoffs. Switching
 `EMBEDDING_PROVIDER` changes the vector width, so the index must be rebuilt;
 the app detects the mismatch and says so rather than failing mid-query.
+
+---
+
+## Results, measured not asserted
+
+Every differentiator was measured against the pipeline without it. The corpus
+for the retrieval numbers is 672 chunks from four structurally different
+documents: *Attention Is All You Need*, the RAG paper, NIST SP 800-63-3 (76
+pages, with a table of contents and front matter) and RFC 2616 (8,989 lines of
+paginated plain text).
+
+### The headline example — hybrid search
+
+> **"What does the 402 status code mean?"**
+
+**Vector search alone** returns five chunks *about status codes*: `6.1.1 Status
+Code and Reason Phrase`, `10 Status Code Definitions`, `10.2 Successful 2xx`,
+`10.4 Client Error 4xx`. Not one of them contains the string `402`. The correct
+chunk is not in the top 20 at all.
+
+**With hybrid search**, RFC 2616's status code registry — the table reading
+`"402" ; Section 10.4.3: Payment Required` — is retrieved at rank 10 with
+`dense_score = None` and `bm25_score = 11.99`. The dense retriever never found
+it; BM25 did.
+
+**With re-ranking**, that chunk moves to **rank 3**, inside the five the
+generator actually sees. Without re-ranking it sits at rank 10 and never
+reaches the model.
+
+That is the whole argument in one question: the embedding model understood the
+question perfectly and answered the topic instead of the question.
+
+### Chunking — chunks that respect section boundaries
+
+A chunk spanning two sections answers with the tail of one topic and the head
+of another, and cannot be cited with a section at all.
+
+| Document | Naive: chunks straddling a section | This pipeline |
+| --- | --- | --- |
+| Attention paper | 18 / 47 (38%) | **0 / 49** |
+| RAG paper | 21 / 81 (26%) | **0 / 74** |
+| NIST SP 800-63-3 | 39 / 163 (24%) | **0 / 125** |
+
+Section headers are also populated for 96%, 96% and 86% of chunks
+respectively, which is what lets a citation say *"p. 8 · 5.4 Regularization"*
+instead of just a page number.
+
+### Re-ranking — what reaches the model
+
+Ten literal-term queries with verifiable ground truth, asking whether a correct
+chunk is among the five chunks passed to the generator:
+
+| Selection | Correct chunk in final context |
+| --- | --- |
+| Fused retrieval order | 9 / 10 |
+| Cross-encoder order | **10 / 10** |
+
+The baseline is already high, so this is not a dramatic aggregate shift — the
+value is in *which* chunk occupies a five-slot context, which the 402 example
+above shows concretely.
+
+### Query transformation — vague questions
+
+Fourteen deliberately vague or colloquial questions, three repeats each, scored
+by the rank of the best correct chunk after re-ranking:
+
+| Mode | In top 5 | MRR |
+| --- | --- | --- |
+| No transformation | 13.0 / 14 | 0.792 |
+| Rewrite | 12.0 / 14 | **0.720** |
+| Multi-query | **14.0 / 14** | **0.857** |
+| HyDE | **14.0 / 14** | 0.856 |
+
+Worth reporting the negative result too: **rewriting is worse than doing
+nothing**, consistently across all three runs. Asked not to add information it
+was not given, it mostly adds a question mark — it cannot bridge *"whats that
+code for when you gotta pay"* to *"Payment Required"*, because it has never
+seen the document. Multi-query and HyDE can, and do. Multi-query is the
+default.
+
+### Grounding — catching an answer that is not supported
+
+Three answers to *"What label smoothing value was used during training?"*,
+scored by the judge:
+
+| Answer | Score |
+| --- | --- |
+| Faithful — "label smoothing of 0.1" | 1.00 (1/1 claims) |
+| Mixed — correct value, invented attribution | 0.50 (1/2) |
+| Fabricated — wrong value, invented corpus and authors | **0.00 (0/3)** |
+
+End to end, a fabricated answer forced through the pipeline — *"label smoothing
+was set to 0.35 … ablations on a held-out Portuguese corpus at Stanford"* —
+scored 0/3 and was **withdrawn** in favour of an honest "I couldn't find enough
+support", rather than served with a confident badge.
