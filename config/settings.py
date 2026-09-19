@@ -48,11 +48,23 @@ EMBEDDING_PROVIDER: EmbeddingProvider = _provider
 # Do not switch these to groq/compound: it has built-in web search and would
 # answer from outside the documents, breaking grounding.
 GROQ_MODEL = "openai/gpt-oss-120b"
-GROQ_JUDGE_MODEL = "openai/gpt-oss-20b"
+# Auxiliary calls run on the smaller model. Both of them — rewriting a query
+# and judging an answer — are short and mechanical, and neither is worth the
+# free tier's token budget: that budget is 8000 tokens per minute against the
+# 120b model and it is shared with generation. It is reached in practice, not
+# in theory. Note that max_tokens counts toward the tokens a request asks for,
+# so a generous cap on a three-line paraphrase is charged whether or not it is
+# used — which is why the auxiliary calls set their own, much smaller limit.
+GROQ_SMALL_MODEL = "openai/gpt-oss-20b"
+GROQ_JUDGE_MODEL = GROQ_SMALL_MODEL
+GROQ_TRANSFORM_MODEL = GROQ_SMALL_MODEL
 LLM_TEMPERATURE = 0.0
 # GPT-OSS emits reasoning tokens before the answer and they count against this
 # budget, so a tight cap returns empty content rather than a truncated answer.
 LLM_MAX_TOKENS = 1024
+# A rewritten query, three paraphrases or a HyDE passage all fit comfortably.
+# Reasoning tokens count against this too, hence the headroom.
+TRANSFORM_MAX_TOKENS = 512
 
 # gemini-embedding-001 over gemini-embedding-2: it still accepts task_type
 # (RETRIEVAL_DOCUMENT / RETRIEVAL_QUERY), which the LangChain integration sets

@@ -96,13 +96,23 @@ def generate_answer(
     return text
 
 
-def get_llm() -> BaseChatModel:
-    """Return the configured Groq chat model, ready to generate answers."""
-    return _build()
+def get_llm(
+    model: str | None = None, max_tokens: int | None = None
+) -> BaseChatModel:
+    """Return a configured Groq chat model.
+
+    Defaults to the generation model. The auxiliary stages — query
+    transformation, and the grounding judge in Phase 7 — pass the smaller
+    model and a tighter token cap, because they share one free-tier budget
+    with generation and neither needs the larger model to do its job.
+    """
+    return _build(
+        model or settings.GROQ_MODEL, max_tokens or settings.LLM_MAX_TOKENS
+    )
 
 
-@lru_cache(maxsize=1)
-def _build() -> BaseChatModel:
+@lru_cache(maxsize=4)
+def _build(model: str, max_tokens: int) -> BaseChatModel:
     from langchain_groq import ChatGroq
 
     if not settings.GROQ_API_KEY:
@@ -111,10 +121,10 @@ def _build() -> BaseChatModel:
         )
 
     return ChatGroq(
-        model=settings.GROQ_MODEL,
+        model=model,
         api_key=settings.GROQ_API_KEY,
         temperature=settings.LLM_TEMPERATURE,
-        max_tokens=settings.LLM_MAX_TOKENS,
+        max_tokens=max_tokens,
     )
 
 
