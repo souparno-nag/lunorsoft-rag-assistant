@@ -1,0 +1,152 @@
+"""Query transformation (see specs/design.md §5.1).
+
+Retrieval can only find what the question gives it something to match on, and
+a question as typed is often a poor search key: it is terse, it is phrased in
+the asker's words rather than the document's, or it buries the searchable term
+in conversational scaffolding. Every stage downstream — dense search, BM25,
+fusion, re-ranking — inherits whatever this one produces.
+
+The modes are chosen by `settings.QUERY_TRANSFORM_MODE` and each hands back a
+`TransformedQuery`, which carries the texts to search with rather than a single
+rewritten string. Dense and sparse retrieval are listed separately because they
+do not always want the same input — see the `hyde` mode.
+
+Every mode degrades to the untransformed query if the LLM call fails. A
+transformation is an optimisation; being unable to paraphrase a question is
+not a reason to refuse to answer it (specs/design.md §2, "fail safe").
+"""
+
+import logging
+import re
+from dataclasses import dataclass, field
+
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from config import settings
+
+logger = logging.getLogger(__name__)
+
+# Leading list markers an LLM adds when asked for several lines: "1. ", "- ",
+# "* ", "2) ".
+_LIST_MARKER = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s*")
+
+# Rewriting must not "clean up" the literal tokens a sparse retriever depends
+# on. An error code, a header name or an identifier is the most valuable thing
+# in the query, and a model asked to clarify will happily turn `Max-Forwards`
+# into "the maximum forwards header" — which is more readable and retrieves
+# worse. Both prompts below say so explicitly.
+_PRESERVE = (
+    "Preserve every specific term exactly as written — names, identifiers, "
+    "error codes, header names, numbers, acronyms and any word in code or "
+    "quotes. Do not expand, translate or tidy them."
+)
+
+_REWRITE_PROMPT = f"""You rewrite a user's question into a single clear, self-contained search query for a document retrieval system.
+
+{_PRESERVE}
+
+Keep the question's meaning and keep it phrased as a question. Do not reduce it to a bare keyword: the rewritten query is embedded for semantic search, and a lone term carries far less meaning than the question it came from. Remove only conversational filler and ambiguity.
+
+Do not answer the question. Do not add information that is not in it. Reply with the rewritten query alone, on one line, with no preamble, quotes or explanation."""
+
+
+@dataclass(frozen=True)
+class TransformedQuery:
+    """What retrieval should actually search for.
+
+    `mode` records what ran, not what was requested — a mode whose LLM call
+    failed reports itself as the fallback that replaced it, so the envelope
+    shown to the user never claims a transformation that did not happen.
+    """
+
+    original: str
+    mode: str
+    dense_queries: list[str] = field(default_factory=list)
+    sparse_queries: list[str] = field(default_factory=list)
+
+    @classmethod
+    def untransformed(cls, query: str, mode: str = "none") -> "TransformedQuery":
+        """Search for exactly what was asked."""
+        return cls(
+            original=query,
+            mode=mode,
+            dense_queries=[query],
+            sparse_queries=[query],
+        )
+
+
+def transform_query(
+    query: str, mode: str | None = None, llm: BaseChatModel | None = None
+) -> TransformedQuery:
+    """Turn a raw question into the queries retrieval should run.
+
+    `llm` is injectable for testing; by default the configured Groq model is
+    used. An unrecognised mode falls back to no transformation rather than
+    raising, so a typo in config costs retrieval quality instead of breaking
+    the app.
+    """
+    query = query.strip()
+    if not query:
+        raise ValueError("query must not be empty")
+
+    mode = mode or settings.QUERY_TRANSFORM_MODE
+    if mode == "none":
+        return TransformedQuery.untransformed(query)
+    if mode == "rewrite":
+        return _rewrite(query, llm)
+
+    logger.warning(
+        "Unknown QUERY_TRANSFORM_MODE %r; retrieving with the original query", mode
+    )
+    return TransformedQuery.untransformed(query)
+
+
+def _rewrite(query: str, llm: BaseChatModel | None) -> TransformedQuery:
+    """Normalize the question into one cleaner search query."""
+    lines = _ask(_REWRITE_PROMPT, query, llm)
+    if not lines:
+        return TransformedQuery.untransformed(query)
+
+    rewritten = lines[0]
+    logger.info("Rewrote query %r -> %r", query, rewritten)
+    return TransformedQuery(
+        original=query,
+        mode="rewrite",
+        dense_queries=[rewritten],
+        sparse_queries=[rewritten],
+    )
+
+
+def _ask(system_prompt: str, query: str, llm: BaseChatModel | None) -> list[str]:
+    """Run one transformation call and return its non-empty lines.
+
+    Returns an empty list on any failure, which every caller reads as "use the
+    original query". Catching broadly is deliberate: this is an optional
+    pre-processing step, and there is no failure of it that should cost the
+    user their answer.
+    """
+    from src.generate.generator import get_llm
+
+    try:
+        llm = llm or get_llm()
+        response = llm.invoke(
+            [SystemMessage(content=system_prompt), HumanMessage(content=query)]
+        )
+    except Exception as exc:
+        logger.warning(
+            "Query transformation failed (%s); retrieving with the original query", exc
+        )
+        return []
+
+    return _clean_lines(str(response.content or ""))
+
+
+def _clean_lines(text: str) -> list[str]:
+    """Strip list markers and quotes from a model's multi-line reply."""
+    lines = []
+    for raw in text.splitlines():
+        line = _LIST_MARKER.sub("", raw).strip().strip('"').strip()
+        if line:
+            lines.append(line)
+    return lines
